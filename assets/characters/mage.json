@@ -1,0 +1,121 @@
+{
+  "id": "mage",
+  "image": "mage.webp",
+  "atlasWidth": 2096,
+  "atlasHeight": 2643,
+  "sourceFps": 10,
+  "scale": 0.46187,
+  "height": 212,
+  "animations": {
+    "idle": {
+      "x": 0,
+      "y": 0,
+      "cw": 160,
+      "ch": 218,
+      "frames": 8,
+      "ax": 76.04,
+      "ay": 214.77,
+      "src": "mage"
+    },
+    "walk": {
+      "x": 0,
+      "y": 218,
+      "cw": 164,
+      "ch": 216,
+      "frames": 8,
+      "ax": 87.58,
+      "ay": 214.77,
+      "src": "mage"
+    },
+    "fly": {
+      "x": 0,
+      "y": 434,
+      "cw": 162,
+      "ch": 197,
+      "frames": 8,
+      "ax": 90.35,
+      "ay": 204.61,
+      "src": "mage"
+    },
+    "cast": {
+      "x": 0,
+      "y": 631,
+      "cw": 200,
+      "ch": 289,
+      "frames": 8,
+      "ax": 95.43,
+      "ay": 285.44,
+      "src": "mage"
+    },
+    "hurt": {
+      "x": 0,
+      "y": 920,
+      "cw": 153,
+      "ch": 242,
+      "frames": 8,
+      "ax": 86.66,
+      "ay": 235.09,
+      "src": "mage"
+    },
+    "death": {
+      "x": 0,
+      "y": 1162,
+      "cw": 262,
+      "ch": 223,
+      "frames": 8,
+      "ax": 170.72,
+      "ay": 214.31,
+      "src": "mage"
+    },
+    "jump": {
+      "x": 0,
+      "y": 1385,
+      "cw": 209,
+      "ch": 299,
+      "frames": 8,
+      "ax": 93.13,
+      "ay": 297.45,
+      "src": "mage_extra"
+    },
+    "fall": {
+      "x": 0,
+      "y": 1684,
+      "cw": 243,
+      "ch": 286,
+      "frames": 8,
+      "ax": 131.46,
+      "ay": 283.13,
+      "src": "mage_extra"
+    },
+    "land": {
+      "x": 0,
+      "y": 1970,
+      "cw": 217,
+      "ch": 216,
+      "frames": 8,
+      "ax": 100.52,
+      "ay": 213.39,
+      "src": "mage_extra"
+    },
+    "beam": {
+      "x": 0,
+      "y": 2186,
+      "cw": 220,
+      "ch": 200,
+      "frames": 8,
+      "ax": 88.51,
+      "ay": 204.61,
+      "src": "mage_extra"
+    },
+    "guard": {
+      "x": 0,
+      "y": 2386,
+      "cw": 169,
+      "ch": 257,
+      "frames": 8,
+      "ax": 86.66,
+      "ay": 253.57,
+      "src": "mage_extra"
+    }
+  }
+}

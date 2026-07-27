@@ -1,0 +1,131 @@
+{
+  "id": "swordsman",
+  "image": "swordsman.webp",
+  "atlasWidth": 2176,
+  "atlasHeight": 2930,
+  "sourceFps": 10,
+  "scale": 0.52826,
+  "height": 215,
+  "animations": {
+    "idle": {
+      "x": 0,
+      "y": 0,
+      "cw": 221,
+      "ch": 221,
+      "frames": 8,
+      "ax": 117.6,
+      "ay": 217.64,
+      "src": "swordsman"
+    },
+    "walk": {
+      "x": 0,
+      "y": 221,
+      "cw": 219,
+      "ch": 222,
+      "frames": 8,
+      "ax": 109.68,
+      "ay": 217.64,
+      "src": "swordsman"
+    },
+    "run": {
+      "x": 0,
+      "y": 443,
+      "cw": 235,
+      "ch": 183,
+      "frames": 8,
+      "ax": 117.6,
+      "ay": 172.74,
+      "src": "swordsman"
+    },
+    "attack": {
+      "x": 0,
+      "y": 626,
+      "cw": 229,
+      "ch": 242,
+      "frames": 8,
+      "ax": 114.43,
+      "ay": 239.3,
+      "src": "swordsman"
+    },
+    "hurt": {
+      "x": 0,
+      "y": 868,
+      "cw": 249,
+      "ch": 220,
+      "frames": 8,
+      "ax": 124.47,
+      "ay": 216.58,
+      "src": "swordsman"
+    },
+    "death": {
+      "x": 0,
+      "y": 1088,
+      "cw": 229,
+      "ch": 251,
+      "frames": 8,
+      "ax": 128.17,
+      "ay": 242.47,
+      "src": "swordsman"
+    },
+    "jump": {
+      "x": 0,
+      "y": 1339,
+      "cw": 248,
+      "ch": 320,
+      "frames": 8,
+      "ax": 124.93,
+      "ay": 315.37,
+      "src": "swordsman_extra"
+    },
+    "fall": {
+      "x": 0,
+      "y": 1659,
+      "cw": 248,
+      "ch": 311,
+      "frames": 8,
+      "ax": 140.78,
+      "ay": 306.92,
+      "src": "swordsman_extra"
+    },
+    "land": {
+      "x": 0,
+      "y": 1970,
+      "cw": 256,
+      "ch": 219,
+      "frames": 8,
+      "ax": 121.23,
+      "ay": 215,
+      "src": "swordsman_extra"
+    },
+    "attack2": {
+      "x": 0,
+      "y": 2189,
+      "cw": 272,
+      "ch": 264,
+      "frames": 8,
+      "ax": 120.71,
+      "ay": 258.85,
+      "src": "swordsman_extra"
+    },
+    "tackle": {
+      "x": 0,
+      "y": 2453,
+      "cw": 246,
+      "ch": 230,
+      "frames": 8,
+      "ax": 111.73,
+      "ay": 225.04,
+      "src": "swordsman_extra"
+    },
+    "guard": {
+      "x": 0,
+      "y": 2683,
+      "cw": 217,
+      "ch": 247,
+      "frames": 8,
+      "ax": 111.2,
+      "ay": 241.94,
+      "src": "swordsman_extra"
+    }
+  }
+}

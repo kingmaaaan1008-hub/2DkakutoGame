@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0d1020">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>2D 格闘ゲーム</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="app">
+  <canvas id="stage"></canvas>
+
+  <!-- 読み込み -->
+  <section class="screen is-active" id="screen-loading">
+    <div class="panel">
+      <h1 class="logo">2D <span>格闘</span></h1>
+      <p class="loading-text" id="loading-text">読み込み中…</p>
+      <div class="loading-bar"><div id="loading-fill"></div></div>
+    </div>
+  </section>
+
+  <!-- タイトル / モード選択 -->
+  <section class="screen" id="screen-title">
+    <div class="panel">
+      <h1 class="logo">2D <span>格闘</span></h1>
+      <p class="tagline">スマホ・PC 両対応 / 3キャラ</p>
+      <div class="menu">
+        <button class="btn primary" data-mode="cpu">CPU と対戦</button>
+        <button class="btn" data-mode="versus">2人で対戦（同じ端末）</button>
+        <button class="btn" data-mode="online">オンライン対戦</button>
+      </div>
+      <details class="help">
+        <summary>操作方法</summary>
+        <div class="help-body">
+          <p><b>スマホ</b>: 画面下のボタン。◀▶ を素早く2回で <b>ダッシュ</b>。</p>
+          <p><b>1P キーボード</b>: A / D 移動、W ジャンプ、F 攻撃、G スキル、H ガード</p>
+          <p><b>2P キーボード</b>: ← / → 移動、↑ ジャンプ、, 攻撃、. スキル、/ ガード</p>
+          <p><b>ゲームパッド</b>: スティック・十字キー移動、A 攻撃、X スキル、B ガード、Y ジャンプ</p>
+          <p>歩き中は常に相手を向きます。同じ方向を2回押すとダッシュ（向いた方向へ走る）。</p>
+          <p><b>スキル</b>はガードを崩せますが、外すと隙が大きい技です。</p>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <!-- キャラクター選択 -->
+  <section class="screen" id="screen-select">
+    <div class="panel wide">
+      <h2 class="select-title" id="select-title">1P キャラクター選択</h2>
+      <div class="roster" id="roster"></div>
+      <div class="select-info" id="select-info"></div>
+      <div class="menu row">
+        <button class="btn ghost" id="select-back">もどる</button>
+        <button class="btn primary" id="select-confirm">決定</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- オンライン接続 -->
+  <section class="screen" id="screen-online">
+    <div class="panel">
+      <h2 class="select-title">オンライン対戦</h2>
+      <p class="note">
+        中継サーバが必要です。<code>server/</code> のリレーをレンタルサーバ等で動かし、
+        その URL を入れてください。合言葉が同じ2人が対戦できます。
+      </p>
+      <label class="field">
+        <span>サーバ URL</span>
+        <input type="text" id="online-url" placeholder="wss://example.com/relay" autocomplete="off">
+      </label>
+      <label class="field">
+        <span>合言葉（ルーム名）</span>
+        <input type="text" id="online-room" placeholder="taisen" autocomplete="off">
+      </label>
+      <p class="status" id="online-status"></p>
+      <div class="menu row">
+        <button class="btn ghost" id="online-back">もどる</button>
+        <button class="btn primary" id="online-connect">接続</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 対戦結果 -->
+  <section class="screen" id="screen-result">
+    <div class="panel">
+      <h2 class="result-title" id="result-title">勝者</h2>
+      <p class="result-score" id="result-score"></p>
+      <div class="menu">
+        <button class="btn primary" id="result-rematch">もう一度</button>
+        <button class="btn" id="result-select">キャラ選択へ</button>
+        <button class="btn ghost" id="result-title-btn">タイトルへ</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 対戦中の画面上ボタン -->
+  <div id="hud-overlay" class="hidden">
+    <button class="icon-btn" id="pause-btn" aria-label="メニュー">||</button>
+    <p class="net-status" id="net-status"></p>
+  </div>
+
+  <!-- 仮想パッド -->
+  <div id="touch" class="touch hidden">
+    <div class="pad pad-left">
+      <button class="tbtn dir" data-btn="left" aria-label="左">◀</button>
+      <button class="tbtn dir" data-btn="right" aria-label="右">▶</button>
+    </div>
+    <div class="pad pad-right">
+      <button class="tbtn act guard" data-btn="guard">ガード</button>
+      <button class="tbtn act jump" data-btn="up">ジャンプ</button>
+      <button class="tbtn act attack" data-btn="attack">攻撃</button>
+      <button class="tbtn act skill" data-btn="skill">スキル</button>
+    </div>
+  </div>
+
+  <!-- ポーズ -->
+  <section class="screen overlay" id="screen-pause">
+    <div class="panel">
+      <h2 class="select-title">ポーズ</h2>
+      <div class="menu">
+        <button class="btn primary" id="pause-resume">つづける</button>
+        <button class="btn" id="pause-restart">やり直す</button>
+        <button class="btn ghost" id="pause-quit">タイトルへ</button>
+      </div>
+      <label class="toggle">
+        <input type="checkbox" id="debug-toggle"> 判定ボックスを表示（技の調整用）
+      </label>
+    </div>
+  </section>
+
+  <p id="rotate-hint" class="rotate-hint hidden">端末を横向きにすると遊びやすくなります</p>
+</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

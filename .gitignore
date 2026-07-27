@@ -1,0 +1,15 @@
+node_modules/
+server/node_modules/
+
+# エディタ / ツールのローカル設定
+.claude/
+
+# アセットビルドの中間生成物（PNG アトラス）。配信するのは assets/characters の WebP のみ。
+.build/
+
+# 目視確認用に吐く画像
+.debug/
+
+*.log
+.DS_Store
+Thumbs.db

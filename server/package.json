@@ -1,0 +1,17 @@
+{
+  "name": "kakuto-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "2D格闘ゲームのオンライン対戦用 WebSocket 中継サーバ",
+  "main": "relay.js",
+  "scripts": {
+    "start": "node relay.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

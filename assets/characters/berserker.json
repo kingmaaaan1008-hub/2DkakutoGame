@@ -1,0 +1,141 @@
+{
+  "id": "berserker",
+  "image": "berserker.webp",
+  "atlasWidth": 2080,
+  "atlasHeight": 2942,
+  "sourceFps": 10,
+  "scale": 0.44379,
+  "height": 225,
+  "animations": {
+    "idle": {
+      "x": 0,
+      "y": 0,
+      "cw": 153,
+      "ch": 230,
+      "frames": 8,
+      "ax": 54.14,
+      "ay": 227.22,
+      "src": "berserker"
+    },
+    "walk": {
+      "x": 0,
+      "y": 230,
+      "cw": 184,
+      "ch": 208,
+      "frames": 8,
+      "ax": 58.58,
+      "ay": 204.14,
+      "src": "berserker"
+    },
+    "run": {
+      "x": 0,
+      "y": 438,
+      "cw": 232,
+      "ch": 203,
+      "frames": 8,
+      "ax": 94.97,
+      "ay": 201.04,
+      "src": "berserker"
+    },
+    "jump": {
+      "x": 0,
+      "y": 641,
+      "cw": 234,
+      "ch": 275,
+      "frames": 8,
+      "ax": 93.2,
+      "ay": 273.82,
+      "src": "berserker"
+    },
+    "fall": {
+      "x": 0,
+      "y": 916,
+      "cw": 217,
+      "ch": 261,
+      "frames": 8,
+      "ax": 95.41,
+      "ay": 259.62,
+      "src": "berserker"
+    },
+    "land": {
+      "x": 0,
+      "y": 1177,
+      "cw": 181,
+      "ch": 224,
+      "frames": 8,
+      "ax": 60.36,
+      "ay": 222.34,
+      "src": "berserker"
+    },
+    "attack": {
+      "x": 0,
+      "y": 1401,
+      "cw": 260,
+      "ch": 205,
+      "frames": 8,
+      "ax": 90.53,
+      "ay": 201.92,
+      "src": "berserker"
+    },
+    "rampage1": {
+      "x": 0,
+      "y": 1606,
+      "cw": 201,
+      "ch": 237,
+      "frames": 8,
+      "ax": 83.43,
+      "ay": 232.54,
+      "src": "berserker"
+    },
+    "rampage2": {
+      "x": 0,
+      "y": 1843,
+      "cw": 180,
+      "ch": 233,
+      "frames": 8,
+      "ax": 62.57,
+      "ay": 230.33,
+      "src": "berserker"
+    },
+    "rampage3": {
+      "x": 0,
+      "y": 2076,
+      "cw": 241,
+      "ch": 214,
+      "frames": 8,
+      "ax": 86.54,
+      "ay": 210.8,
+      "src": "berserker"
+    },
+    "guard": {
+      "x": 0,
+      "y": 2290,
+      "cw": 162,
+      "ch": 215,
+      "frames": 8,
+      "ax": 50.15,
+      "ay": 212.13,
+      "src": "berserker"
+    },
+    "hurt": {
+      "x": 0,
+      "y": 2505,
+      "cw": 200,
+      "ch": 219,
+      "frames": 8,
+      "ax": 73.67,
+      "ay": 216.12,
+      "src": "berserker"
+    },
+    "death": {
+      "x": 0,
+      "y": 2724,
+      "cw": 236,
+      "ch": 218,
+      "frames": 8,
+      "ax": 103.85,
+      "ay": 202.37,
+      "src": "berserker"
+    }
+  }
+}
