@@ -11,14 +11,14 @@ import { BTN } from '../game/constants.js';
 
 /** キーボード配列。1台で2人対戦できるように左右で分けてある。 */
 const KEYMAP = [
-  // プレイヤー1: 左手
+  // プレイヤー1: 移動は左手(A/D)・ジャンプはその上(W)、アクションは右手(J/K/L)
   {
     KeyA: BTN.LEFT,
     KeyD: BTN.RIGHT,
     KeyW: BTN.UP,
-    KeyF: BTN.ATTACK,
-    KeyG: BTN.SKILL,
-    KeyH: BTN.GUARD,
+    KeyJ: BTN.ATTACK,
+    KeyK: BTN.SKILL,
+    KeyL: BTN.GUARD,
   },
   // プレイヤー2: 右手
   {
@@ -65,7 +65,15 @@ export class InputManager {
   }
 
   attachKeyboard(target = window) {
+    // スペースやキーで操作される UI にフォーカスがあるときは横取りしない
+    // （タイトルのボタンや「操作方法」がスペースで開けなくなるため）
+    const isUiFocused = (event) => {
+      const el = event.target;
+      return el instanceof Element && el.closest('button, summary, a, input, select, textarea');
+    };
+
     const apply = (event, pressed) => {
+      if (isUiFocused(event)) return;
       let handled = false;
       for (let p = 0; p < KEYMAP.length; p += 1) {
         const bit = KEYMAP[p][event.code];

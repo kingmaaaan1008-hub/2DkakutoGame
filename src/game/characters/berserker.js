@@ -80,7 +80,8 @@ export default {
       motion: [{ start: 8, end: 32, vx: 1.5 }],
     },
 
-    // スキル: 深く踏み込む刺突。リーチが長い代わりに戻りが遅い。
+    // スキル: その場からの刺突。当たればダウンを奪えるが、戻りが遅い。
+    // 前には出ない。間合いは踏み込みではなく判定の長さで取る。
     thrust: {
       label: '突き',
       anim: 'attack',
@@ -90,15 +91,17 @@ export default {
         {
           start: 18,
           end: 27,
-          box: { x: 36, y: 72, w: 196, h: 74 },
+          // 前方 166 まで。刃先が一番伸びる 6 コマ目の実測値に合わせてある
+          // （判定が出ている 18〜27F は 4〜6 コマ目にあたる）
+          box: { x: 36, y: 72, w: 130, h: 74 },
           damage: 146,
           hitstun: 34,
           hitstop: 12,
           pushHit: 10,
           guardBreak: true,
+          knockdown: true,
         },
       ],
-      motion: [{ start: 16, end: 27, vx: 6.6, stopOnHit: true }],
     },
   }),
 };

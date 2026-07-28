@@ -162,7 +162,8 @@ export class Simulation {
   _resolveHits(ai, di) {
     const attacker = this.fighters[ai];
     const defender = this.fighters[di];
-    if (defender.isKO || attacker.hitstop > 0) return;
+    // ダウン中は無敵。追撃で起き上がりを潰し続けられないようにする。
+    if (defender.isKO || defender.invulnerable || attacker.hitstop > 0) return;
 
     const hits = attacker.activeHits();
     if (hits.length === 0) return;
@@ -188,6 +189,11 @@ export class Simulation {
         life: spawn.duration ?? 40,
         follow: fighter.index,
         facing: fighter.facing,
+        // 判定と同じ原点・太さ・長さ。描画側はこれを見て描く
+        ox: spawn.origin?.x ?? 0,
+        oy: spawn.origin?.y ?? 0,
+        halfHeight: spawn.halfHeight ?? 40,
+        length: spawn.length ?? 1000,
       });
       this.shake = Math.max(this.shake, 6);
       return;
@@ -225,7 +231,8 @@ export class Simulation {
 
       let remove = p.life <= 0 || p.x < -60 || p.x > STAGE_WIDTH + 60 || p.y < -40;
 
-      if (!remove && !target.isKO && target.hitstop === 0) {
+      // ダウン中の相手は弾もすり抜ける（消えずに通過する）
+      if (!remove && !target.isKO && !target.invulnerable && target.hitstop === 0) {
         const box = { x: p.x - def.radius, y: p.y - def.radius, w: def.radius * 2, h: def.radius * 2 };
         if (boxesOverlap(box, target.hurtBox())) {
           target.receiveHit(def, p.x, p.facing, this.fighters[p.owner], this);
@@ -252,6 +259,11 @@ export class Simulation {
       maxLife: life,
       follow: opts.follow ?? null,
       facing: opts.facing ?? 1,
+      // ビームなど、原点と大きさを技データから受け取る演出用
+      ox: opts.ox ?? 0,
+      oy: opts.oy ?? 0,
+      halfHeight: opts.halfHeight ?? 0,
+      length: opts.length ?? 0,
       seed: this.rng.int(0, 1000),
     });
   }

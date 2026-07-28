@@ -5,6 +5,16 @@
  */
 import { drawStillFrame } from '../render/spritebank.js';
 
+/**
+ * 直前に押したボタンからフォーカスを外す。
+ * 押しっぱなしのフォーカスが残っていると、スペースなどのゲーム用キーが
+ * そのボタンに吸われてしまう（決定ボタン → 試合開始直後のジャンプなど）。
+ */
+function dropFocus() {
+  const el = document.activeElement;
+  if (el instanceof HTMLElement && el !== document.body) el.blur();
+}
+
 export class ScreenManager {
   constructor() {
     this.screens = new Map();
@@ -20,11 +30,13 @@ export class ScreenManager {
       el.classList.toggle('is-active', key === id);
     }
     this.current = id;
+    dropFocus();
   }
 
   /** ポーズなど、上に重ねる画面の表示切り替え。 */
   overlay(id, visible) {
     this.screens.get(id)?.classList.toggle('is-active', visible);
+    dropFocus();
   }
 
   isOverlayOpen(id) {

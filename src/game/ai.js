@@ -71,8 +71,13 @@ export class CpuController {
       bits = BTN.GUARD;
       ticks = 14;
     }
-    // 2. 間合いに入っていれば攻撃
-    else if (dist < strikeRange && this.cooldown === 0 && rng.chance(this.cfg.aggression)) {
+    // 2. 間合いに入っていれば攻撃（ダウン中の相手には当たらないので振らない）
+    else if (
+      dist < strikeRange &&
+      !foe.invulnerable &&
+      this.cooldown === 0 &&
+      rng.chance(this.cfg.aggression)
+    ) {
       if (rng.chance(this.cfg.skillChance)) {
         bits = BTN.SKILL;
         this.cooldown = 90;

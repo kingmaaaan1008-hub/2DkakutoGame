@@ -27,6 +27,18 @@ export const HURTBOX = { x: -38, y: 0, w: 76, h: 198 };
 const LAND_LAG = 7;
 /** ガードを崩されたときの追加硬直。スキル技のリターンはここで決まる。 */
 const GUARD_BREAK_EXTRA = 16;
+
+/**
+ * ダウン（knockdown 指定の技を食らったとき）。
+ * 打ち上げ → 落下 → 倒れる（DOWN_LIE_TICKS）→ 起き上がり（DOWN_GETUP_TICKS）。
+ * 倒れている間は無敵なので、ダウンを取った側は追撃ではなく起き攻めを狙う形になる。
+ */
+const DOWN_LIE_TICKS = 32;
+const DOWN_GETUP_TICKS = 28;
+/** knockdown の hit に launch 指定が無いときの打ち上げ速度（重いキャラほど浮かない）。 */
+const KNOCKDOWN_LAUNCH_VY = 9.5;
+/** ダウンの各段階。 */
+const DOWN_PHASE = { AIR: 0, LIE: 1, GETUP: 2 };
 /** コンボ補正。段数が増えるほどダメージを減らし、永久コンボを防ぐ。 */
 const COMBO_SCALE_STEP = 0.1;
 const COMBO_SCALE_MIN = 0.4;
@@ -59,6 +71,7 @@ export class Fighter {
     this.usedGroups = [];
 
     this.hitstop = 0;
+    this.downPhase = DOWN_PHASE.AIR;
     this.guardHeld = false;
     this.walkDir = 0;
     this.dashDir = 0;
@@ -83,6 +96,7 @@ export class Fighter {
       hold: false,
       reverse: false,
       stretch: 0,
+      range: null,
     };
   }
 
@@ -94,6 +108,14 @@ export class Fighter {
 
   get isKO() {
     return this.state === STATE.KO;
+  }
+
+  /**
+   * 無敵か。ダウン中（浮いてから起き上がり切るまで）は攻撃を受け付けない。
+   * ここを見て判定を飛ばすのは sim 側。
+   */
+  get invulnerable() {
+    return this.state === STATE.DOWN;
   }
 
   /** 自由に動ける状態か（技・硬直・空中を除く）。 */
@@ -162,8 +184,17 @@ export class Fighter {
       reverse: opts.reverse ?? false,
       /** 指定するとアニメ全体をこのティック数に引き伸ばす。 */
       stretch: opts.stretch ?? 0,
+      /** [開始,終了] を指定すると、そのコマ範囲だけを使う。null なら全コマ。 */
+      range: opts.range ?? null,
     };
-    if (this.anim.name === name && this.anim.stretch === next.stretch && !opts.restart) {
+    // 名前が同じでも、引き伸ばし方やコマ範囲が違えば別のアニメとして作り直す
+    const sameRange =
+      this.anim.range === next.range ||
+      (this.anim.range != null &&
+        next.range != null &&
+        this.anim.range[0] === next.range[0] &&
+        this.anim.range[1] === next.range[1]);
+    if (this.anim.name === name && this.anim.stretch === next.stretch && sameRange && !opts.restart) {
       // 逆再生フラグだけは毎フレーム変わりうる（後退歩き）
       this.anim.reverse = next.reverse;
       this.anim.fps = next.fps;
@@ -241,6 +272,7 @@ export class Fighter {
     this.setAnim(move.anim, {
       fps: move.animFps ?? 0,
       stretch: move.animFps ? 0 : move.total,
+      range: move.animRange,
       hold: true,
       restart: true,
     });
@@ -307,6 +339,9 @@ export class Fighter {
       case STATE.GUARD_BREAK:
         this._stepStun();
         break;
+      case STATE.DOWN:
+        this._stepDown();
+        break;
       case STATE.KO:
         this.vx *= 0.9;
         break;
@@ -314,7 +349,7 @@ export class Fighter {
         break;
     }
 
-    this._integrate();
+    this._integrate(sim);
   }
 
   _stepFree(dir, dashRequest, opponent, sim) {
@@ -386,7 +421,9 @@ export class Fighter {
     const move = this.currentMove();
     this.moveFrame += 1;
     if (this.moveFrame >= move.total) {
-      this._toIdle();
+      // 繋ぎ先があれば入力を待たずに続ける（溜め → 突進 のような 2 段構えの技）
+      if (move.onEnd) this.startMove(move.onEnd, opponent);
+      else this._toIdle();
       return;
     }
 
@@ -417,6 +454,32 @@ export class Fighter {
     if (!moving && !this.airborne) this.vx *= 0.82;
   }
 
+  /**
+   * ダウン中。着地の検出は _integrate 側で行い、ここは倒れてからの時間を進める。
+   * 倒れる／起き上がるモーションは death シートを流用している
+   * （専用シートが無いため。起き上がりはそれを逆再生する）。
+   */
+  _stepDown() {
+    if (this.downPhase === DOWN_PHASE.AIR) {
+      // 落ちている間はのけぞりのまま
+      this.setAnim(this.def.anims.hurt, { fps: 14, hold: true });
+      return;
+    }
+
+    if (this.downPhase === DOWN_PHASE.LIE) {
+      this.vx *= 0.86;
+      if (this.stateTimer >= DOWN_LIE_TICKS) {
+        this.downPhase = DOWN_PHASE.GETUP;
+        this.stateTimer = 0;
+        this.setAnim(this.def.anims.death, { fps: 17, hold: true, reverse: true, restart: true });
+      }
+      return;
+    }
+
+    this.vx = 0;
+    if (this.stateTimer >= DOWN_GETUP_TICKS) this._toIdle();
+  }
+
   _stepStun() {
     this.vx *= 0.9;
     if (this.stateTimer >= this.stunTicks) {
@@ -430,7 +493,7 @@ export class Fighter {
   }
 
   /** 速度を位置に反映し、床と壁で止める。 */
-  _integrate() {
+  _integrate(sim) {
     this.x += this.vx;
     if (this.airborne || this.vy !== 0) {
       this.y += this.vy;
@@ -439,6 +502,7 @@ export class Fighter {
 
     if (this.y <= 0) {
       const wasAir = this.state === STATE.JUMP;
+      const crashed = this.state === STATE.DOWN && this.downPhase === DOWN_PHASE.AIR;
       this.y = 0;
       this.vy = 0;
       if (wasAir) {
@@ -446,6 +510,13 @@ export class Fighter {
         this.stateTimer = 0;
         this.vx *= 0.4;
         this.setAnim(this.def.anims.land, { fps: 20, hold: true, restart: true });
+      } else if (crashed) {
+        // 叩きつけられて倒れる。ここからが「ダウンしている時間」。
+        this.downPhase = DOWN_PHASE.LIE;
+        this.stateTimer = 0;
+        this.vx *= 0.35;
+        this.setAnim(this.def.anims.death, { fps: 20, hold: true, restart: true });
+        if (sim) sim.shake = Math.max(sim.shake, 10);
       }
     }
 
@@ -498,12 +569,23 @@ export class Fighter {
     this.health -= Math.round(hit.damage * scale);
 
     const breaking = wasBlocking && hit.guardBreak;
-    this.state = breaking ? STATE.GUARD_BREAK : STATE.HIT;
+    // ダウン技はのけぞりではなく、打ち上げてダウンさせる（hitstun は使わない）
+    const knocked = hit.knockdown === true;
+    this.state = knocked ? STATE.DOWN : breaking ? STATE.GUARD_BREAK : STATE.HIT;
     this.stateTimer = 0;
     this.stunTicks = hit.hitstun + (breaking ? GUARD_BREAK_EXTRA : 0);
     this.vx = (pushDir * hit.pushHit) / this.def.weight;
+    if (knocked) {
+      this.downPhase = DOWN_PHASE.AIR;
+      this.moveId = null;
+      this.usedGroups = [];
+      this.comboCount = 0;
+    }
     if (hit.launch) {
       this.vy = hit.launch.y;
+      this.y = Math.max(this.y, 0.01);
+    } else if (knocked) {
+      this.vy = KNOCKDOWN_LAUNCH_VY / this.def.weight;
       this.y = Math.max(this.y, 0.01);
     }
     this.setAnim(this.def.anims.hurt, { fps: 14, hold: true, restart: true });
@@ -540,13 +622,14 @@ export class Fighter {
     return [
       this.x, this.y, this.vx, this.vy, this.facing, this.health,
       this.state, this.stateTimer, this.moveId, this.moveFrame,
-      this.moveHitLanded, this.usedGroups.slice(), this.hitstop,
+      this.moveHitLanded, this.usedGroups.slice(), this.hitstop, this.downPhase,
       this.guardHeld, this.walkDir, this.dashDir, this.prevInput,
       this.tapDir, this.tapTimer, this.bufAttack, this.bufSkill, this.bufJump,
       this.comboCount, this.comboDisplay, this.comboDisplayTimer,
       this.stunTicks ?? 0,
       this.anim.name, this.anim.time, this.anim.fps, this.anim.loop,
       this.anim.hold, this.anim.reverse, this.anim.stretch,
+      this.anim.range ? this.anim.range.slice() : null,
     ];
   }
 
@@ -556,6 +639,7 @@ export class Fighter {
     this.facing = s[i++]; this.health = s[i++];
     this.state = s[i++]; this.stateTimer = s[i++]; this.moveId = s[i++]; this.moveFrame = s[i++];
     this.moveHitLanded = s[i++]; this.usedGroups = s[i++].slice(); this.hitstop = s[i++];
+    this.downPhase = s[i++];
     this.guardHeld = s[i++]; this.walkDir = s[i++]; this.dashDir = s[i++]; this.prevInput = s[i++];
     this.tapDir = s[i++]; this.tapTimer = s[i++];
     this.bufAttack = s[i++]; this.bufSkill = s[i++]; this.bufJump = s[i++];
@@ -563,7 +647,9 @@ export class Fighter {
     this.stunTicks = s[i++];
     this.anim = {
       name: s[i++], time: s[i++], fps: s[i++], loop: s[i++],
-      hold: s[i++], reverse: s[i++], stretch: s[i++],
+      hold: s[i++], reverse: s[i++], stretch: s[i++], range: null,
     };
+    const range = s[i++];
+    this.anim.range = range ? range.slice() : null;
   }
 }

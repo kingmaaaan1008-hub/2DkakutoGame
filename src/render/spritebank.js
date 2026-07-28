@@ -20,7 +20,13 @@ export function resolveFrame(anim, sprite) {
   const cell = sprite.animations[anim.name];
   if (!cell) return null;
 
-  const count = cell.frames;
+  // 使う区間。技側は実際のコマ数を知らないので、はみ出す指定はここで丸める。
+  // 以降の index は「区間の先頭から数えた番号」で、最後にシート上の番号へ戻す。
+  const last = cell.frames - 1;
+  const first = anim.range ? Math.min(Math.max(anim.range[0], 0), last) : 0;
+  const stop = anim.range ? Math.min(Math.max(anim.range[1], first), last) : last;
+  const count = stop - first + 1;
+
   let index;
   if (anim.stretch > 0) {
     // 技全体にアニメを引き伸ばす
@@ -35,7 +41,7 @@ export function resolveFrame(anim, sprite) {
   // 後退歩きなどの逆再生
   if (anim.reverse) index = count - 1 - index;
 
-  return { cell, index };
+  return { cell, index: first + index };
 }
 
 /**
@@ -47,15 +53,18 @@ export function resolveFrame(anim, sprite) {
  * @param {number} screenY 足元の画面Y
  * @param {number} facing 1 = 右向き, -1 = 左向き
  * @param {number} zoom
+ * @param {number} scale アニメ個別の表示倍率（素材ごとの大きさのばらつき補正）。
+ *                       足元アンカーを原点に拡大するので、地面から浮くことはない。
  */
-export function drawFighterSprite(ctx, sprite, anim, screenX, screenY, facing, zoom) {
+export function drawFighterSprite(ctx, sprite, anim, screenX, screenY, facing, zoom, scale = 1) {
   const resolved = resolveFrame(anim, sprite);
   if (!resolved) return;
   const { cell, index } = resolved;
 
+  const z = zoom * scale;
   ctx.save();
   ctx.translate(screenX, screenY);
-  ctx.scale(facing < 0 ? -zoom : zoom, zoom);
+  ctx.scale(facing < 0 ? -z : z, z);
   ctx.drawImage(
     sprite.image,
     cell.x + index * cell.cw,

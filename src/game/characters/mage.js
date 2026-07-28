@@ -9,17 +9,40 @@
  */
 import { defineMoves } from '../moves.js';
 
-/** ビームの持続判定。長い矩形を一定間隔で当て直して「照射され続けている」感を出す。 */
-function beamTick(start, group) {
+/**
+ * 杖の先端（足元原点・前方向が正）。beam シートで水晶が来る位置の実測値で、
+ * 照射中の 5〜8 コマ目はほぼここに収まっている。
+ * ビームは判定も見た目もこの点を中心に出す。
+ */
+const STAFF_TIP = { x: 93, y: 156 };
+
+/** ビームの太さ（中心から上下それぞれ）。 */
+const BEAM_HALF_HEIGHT = 49;
+
+/** ビームの長さ。ステージ端まで届く。 */
+const BEAM_LENGTH = 1000;
+
+/**
+ * ビームの持続判定。長い矩形を一定間隔で当て直して「照射され続けている」感を出す。
+ * 最終打だけ knockdown を持たせ、照射しきったところで倒す。
+ * （途中の打でダウンさせると無敵になって残りが当たらないため、最後の1打だけ）
+ */
+function beamTick(start, group, knockdown = false) {
   return {
     start,
     end: start + 4,
-    box: { x: 52, y: 74, w: 1000, h: 98 },
+    box: {
+      x: STAFF_TIP.x,
+      y: STAFF_TIP.y - BEAM_HALF_HEIGHT,
+      w: BEAM_LENGTH,
+      h: BEAM_HALF_HEIGHT * 2,
+    },
     damage: 32,
     hitstun: 12,
-    hitstop: 3,
-    pushHit: 2.2,
+    hitstop: knockdown ? 8 : 3,
+    pushHit: knockdown ? 7 : 2.2,
     guardBreak: true,
+    knockdown,
     group,
   };
 }
@@ -31,10 +54,12 @@ export default {
   themeColor: '#b070ff',
 
   health: 900,
-  walkSpeed: 2.8,
-  dashSpeed: 6.4,
+  // 移動は他の 2 人の 3 分の 2。剣士と狂戦士の平均（歩き 3.25 / ダッシュ 7.25 /
+  // ジャンプ 4.6）に 2/3 を掛けた値。距離を取る側なので足の遅さが弱点になる。
+  walkSpeed: 2.2,
+  dashSpeed: 4.8,
   jumpVy: 13.0,
-  jumpVx: 4.2,
+  jumpVx: 3.1,
   weight: 0.9,
 
   anims: {
@@ -69,8 +94,25 @@ export default {
       anim: 'beam',
       total: 82,
       animFps: 9,
-      spawns: [{ frame: 24, type: 'beam', duration: 40 }],
-      hits: [beamTick(26, 0), beamTick(33, 1), beamTick(40, 2), beamTick(47, 3), beamTick(54, 4)],
+      // 見た目のビームにも判定と同じ原点・太さ・長さを渡す。
+      // 描画側が別に数値を持つと、判定と光線がずれていくため
+      spawns: [
+        {
+          frame: 24,
+          type: 'beam',
+          duration: 40,
+          origin: STAFF_TIP,
+          halfHeight: BEAM_HALF_HEIGHT,
+          length: BEAM_LENGTH,
+        },
+      ],
+      hits: [
+        beamTick(26, 0),
+        beamTick(33, 1),
+        beamTick(40, 2),
+        beamTick(47, 3),
+        beamTick(54, 4, true), // 最終打でダウン
+      ],
       // 撃っている間は踏ん張って動かない
       motion: [],
     },

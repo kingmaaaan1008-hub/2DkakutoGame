@@ -104,16 +104,31 @@ section('剣士の攻撃と連携');
   run(sim, 1, BTN.ATTACK);
   check('攻撃で1段目「横切り」が出る', p1.moveId === 'slash1', `move=${p1.moveId}`);
 
-  run(sim, 20, 0);
+  // 判定が出るのは剣を伸ばしきったあたり。当たるまで進める
+  for (let i = 0; i < 40 && p2.health === hp0; i += 1) run(sim, 1, 0);
   check('1段目が当たる', p2.health < hp0, `hp ${hp0} -> ${p2.health}`);
 
   const hp1 = p2.health;
-  // 連携受付中に攻撃を入れ直す
+  // 連携の受付は 1段目を振り切ったあと。当ててすぐ押しても繋がらない。
   run(sim, 1, BTN.ATTACK);
   run(sim, 4, 0);
-  check('続けて攻撃で2段目「盾切り」に繋がる', p1.moveId === 'slash2', `move=${p1.moveId}`);
-  run(sim, 25, 0);
+  check('当てた直後に押しても2段目は出ない', p1.moveId === 'slash1', `move=${p1.moveId}`);
+
+  // 受付が開くまで待ってから入れ直す
+  const chain = p1.def.moves.slash1.chains[0];
+  for (let i = 0; i < 60 && p1.moveFrame < chain.from; i += 1) run(sim, 1, 0);
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 4, 0);
+  check('連携受付で2段目「盾切り」に繋がる', p1.moveId === 'slash2', `move=${p1.moveId}`);
+
+  // 2段目が当たるまで、相手が硬直から抜けていないか（＝連続技として繋がるか）を見る
+  let recovered = false;
+  for (let i = 0; i < 30 && p2.health === hp1; i += 1) {
+    run(sim, 1, 0);
+    if (p2.isFree) recovered = true;
+  }
   check('2段目も当たる', p2.health < hp1, `hp ${hp1} -> ${p2.health}`);
+  check('1段目からの連続技として繋がる', !recovered);
 }
 
 // ── ガード ──────────────────────────────────────────────────
@@ -126,8 +141,9 @@ section('ガード');
 
   // P2 はガードを押しっぱなし
   run(sim, 1, BTN.ATTACK, BTN.GUARD);
-  run(sim, 22, 0, BTN.GUARD);
+  for (let i = 0; i < 40 && p2.health === hp0; i += 1) run(sim, 1, 0, BTN.GUARD);
 
+  check('ガードしても削りは受ける', p2.health < hp0, `hp ${hp0} -> ${p2.health}`);
   check('ガードすると削りだけで済む', p2.health > hp0 - 20, `hp ${hp0} -> ${p2.health}`);
   check('ガード硬直状態になる', p2.state === STATE.BLOCK || p2.state === STATE.GUARD,
     `state=${p2.state}`);
@@ -141,11 +157,75 @@ section('ガード');
   const hp0 = p2.health;
 
   run(sim, 1, BTN.SKILL, BTN.GUARD);
-  check('スキルでタックルが出る', p1.moveId === 'tackle', `move=${p1.moveId}`);
-  run(sim, 34, 0, BTN.GUARD);
+  check('スキルでタックルの溜めが出る', p1.moveId === 'tackleCharge', `move=${p1.moveId}`);
 
+  // 溜めの間は無防備。判定も移動も無い
+  const chargeX = p1.x;
+  run(sim, p1.def.moves.tackleCharge.total - 2, 0, BTN.GUARD);
+  check('溜めの間は動かない', p1.x === chargeX, `x ${chargeX} -> ${p1.x}`);
+  check('溜めの間は当たり判定が出ない', p2.health === hp0, `hp ${hp0} -> ${p2.health}`);
+
+  // 溜めきると入力無しで突進へ移る
+  run(sim, 3, 0, BTN.GUARD);
+  check('溜めきると突進に移る', p1.moveId === 'tackle', `move=${p1.moveId}`);
+
+  run(sim, 30, 0, BTN.GUARD);
   check('ガードしていても大ダメージを受ける', hp0 - p2.health > 100, `hp ${hp0} -> ${p2.health}`);
-  check('ガード崩し状態になる', p2.state === STATE.GUARD_BREAK, `state=${p2.state}`);
+  // ガードを崩したうえでダウンまで奪う技なので、行き着く先は DOWN
+  check('ガードごと崩してダウンさせる', p2.state === STATE.DOWN, `state=${p2.state}`);
+}
+
+// ── ダウン ──────────────────────────────────────────────────
+section('ダウン');
+{
+  // 剣士のスキル（タックル）でダウンを奪う
+  const sim = newSim();
+  place(sim, 800, 930);
+  const [p1, p2] = sim.fighters;
+
+  run(sim, 1, BTN.SKILL);
+  run(sim, p1.def.moves.tackleCharge.total + 25, 0);
+  check('スキルヒットでダウンする', p2.state === STATE.DOWN, `state=${p2.state}`);
+  check('打ち上がって浮く', p2.y > 0, `y=${p2.y.toFixed(1)}`);
+
+  // ダウン中は無敵。追撃を入れても体力が減らない。
+  const hpDown = p2.health;
+  run(sim, 20, 0);
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 25, 0);
+  check('ダウン中は追撃が当たらない', p2.health === hpDown, `hp ${hpDown} -> ${p2.health}`);
+  check('ダウン中は操作できない', p2.isFree === false, `state=${p2.state}`);
+
+  // 起き上がるまで待つ
+  run(sim, 90, 0, BTN.RIGHT);
+  check('やがて起き上がって動けるようになる', p2.state !== STATE.DOWN, `state=${p2.state}`);
+  check('起き上がったら地面に戻っている', p2.y === 0, `y=${p2.y}`);
+}
+
+{
+  // 狂戦士のスキル（突き）
+  const sim = newSim(['berserker', 'swordsman']);
+  place(sim, 800, 950);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.SKILL);
+  run(sim, 30, 0);
+  check('狂戦士の突きでダウンする', p2.state === STATE.DOWN, `state=${p2.state}`);
+}
+
+{
+  // 魔法使いのビームは最終打だけダウン
+  const sim = newSim(['mage', 'swordsman']);
+  place(sim, 700, 1000);
+  const p2 = sim.fighters[1];
+
+  run(sim, 1, BTN.SKILL);
+  run(sim, 50, 0); // 途中の打が当たっているころ
+  check('ビーム途中の打ではダウンしない', p2.state !== STATE.DOWN, `state=${p2.state}`);
+  const mid = p2.health;
+  check('途中の打はダメージが入っている', mid < p2.maxHealth, `hp=${mid}`);
+
+  run(sim, 20, 0); // 最終打まで
+  check('ビーム最終打でダウンする', p2.state === STATE.DOWN, `state=${p2.state}`);
 }
 
 {
@@ -154,7 +234,8 @@ section('ガード');
   place(sim, 500, 1300); // 遠く離して空振りさせる
   const p1 = sim.fighters[0];
   run(sim, 1, BTN.SKILL);
-  const total = p1.def.moves.tackle.total;
+  // 溜め → 突進で 1 つの技。硬直は両方を足した長さになる
+  const total = p1.def.moves.tackleCharge.total + p1.def.moves.tackle.total;
   run(sim, total - 20, 0);
   check('空振り後もしばらく動けない', p1.state === STATE.MOVE, `state=${p1.state}`);
   run(sim, 25, 0);
@@ -230,7 +311,7 @@ section('試合進行');
   place(sim, 800, 930);
 
   run(sim, 1, BTN.ATTACK);
-  run(sim, 22, 0);
+  for (let i = 0; i < 40 && !p2.isKO; i += 1) run(sim, 1, 0);
   check('体力0でKOになる', p2.isKO, `state=${p2.state}`);
   check('ラウンド終了フェーズに移る', sim.phase === 'roundEnd', `phase=${sim.phase}`);
   check('勝者にラウンドが加算される', sim.wins[0] === 1, `wins=${sim.wins}`);

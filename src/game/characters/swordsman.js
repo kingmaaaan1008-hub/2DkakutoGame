@@ -33,39 +33,64 @@ export default {
     death: 'death',
   },
 
+  /**
+   * アニメごとの表示倍率（見た目だけ。判定・移動には影響しない）。
+   * run シートは素材の時点で他より 2 割ほど小さく描かれていて、
+   * 歩き → ダッシュで急に縮んで見えるので、ここで補正している。
+   */
+  animScale: {
+    run: 1.18,
+  },
+
   /** 攻撃ボタン・スキルボタンで出る技。 */
   attackMove: 'slash1',
-  skillMove: 'tackle',
+  skillMove: 'tackleCharge',
 
   moves: defineMoves({
-    // 1段目。発生が早く、ここから盾切りへ繋ぐ。
+    // 1段目。振りかぶってから斬る。ここから盾切りへ繋ぐ。
     slash1: {
       label: '横切り',
       anim: 'attack2',
-      total: 30,
+      // 8コマを 14fps で振り切ると約 34 フレーム。そこから total まではその姿勢の
+      // まま構え直す時間で、連携の受付はこの区間に置いてある。
+      // （animFps を指定せず total だけ伸ばすと、振り自体が間延びしてしまう）
+      total: 46,
+      animFps: 14,
       hits: [
         {
-          start: 11,
-          end: 15,
+          // 剣を横に伸ばしきる 6 コマ目（14fps なので 21〜24 フレーム）に合わせてある。
+          // ここを動かすときは下の hitstun / chains も一緒に見直すこと
+          start: 21,
+          end: 25,
           box: { x: 34, y: 74, w: 140, h: 92 },
           damage: 62,
-          hitstun: 19,
-          blockstun: 12,
+          // 連携の受付を遅らせたぶん、繋がるようにのけぞりも伸ばしてある。
+          // blockstun も揃えて、ヒット +3 / ガード -7 は従来どおりにしている
+          hitstun: 28,
+          blockstun: 18,
           hitstop: 7,
           chip: 3,
           pushHit: 5.5,
           pushBlock: 3.4,
         },
       ],
-      motion: [{ start: 9, end: 13, vx: 2.4 }],
-      // ヒットしてもガードされても繋がる。空振りからも繋がるが隙は残る。
-      chains: [{ from: 12, to: 27, button: 'attack', move: 'slash2' }],
+      // 踏み込みは振り抜く動きに乗せる
+      motion: [{ start: 19, end: 23, vx: 2.4 }],
+      // 受付は「1段目のモーションを出し切ったあと」。当ててすぐ押しても出ないので、
+      // 斬ってから繋ぐ間があり、連打ではなくタイミングで繋ぐ形になる。
+      chains: [{ from: 32, to: 44, button: 'attack', move: 'slash2' }],
     },
 
     // 2段目。踏み込みが深く、ガードさせても有利。
     slash2: {
       label: '盾切り',
       anim: 'attack',
+      // attack シートは 0-3 で下から刀を担ぎ上げ、4-7 で振り下ろす。
+      // 1段目から繋ぐ技なので担ぎ上げは要らない。振り下ろす側だけを使う。
+      animRange: [4, 7],
+      // 4コマを 9fps ＝ 約27フレーム。振り下ろすコマ(6枚目)が判定の出る
+      // 15〜20 に重なり、残りは最後のコマを保持したまま硬直になる。
+      animFps: 9,
       total: 38,
       hits: [
         {
@@ -84,26 +109,44 @@ export default {
       motion: [{ start: 12, end: 17, vx: 3.4 }],
     },
 
-    // スキル: ガード不能の突進。当たれば大きく吹き飛ばす。
+    // スキル: ガード不能の突進。当たれば吹き飛ばしてダウンを奪う。
+    //
+    // 溜めと突進で 2 つに分けてある。tackle シートの前半 2 コマ（構え → 沈み込み）を
+    // ゆっくり見せてから、後半の走りに切り替える。1 枚のアニメでは
+    // この 2 段階の速さを出せないため（前半に合わせると走りが鈍る）。
+    tackleCharge: {
+      label: 'タックル（溜め）',
+      anim: 'tackle',
+      animRange: [0, 1],
+      // 2コマを 4fps ＝ ちょうど 30 フレーム。この間は判定も移動も無い丸腰
+      total: 30,
+      animFps: 4,
+      onEnd: 'tackle',
+    },
+
     tackle: {
       label: 'タックル',
       anim: 'tackle',
-      total: 54,
+      // 走り出しのコマから。溜めで向きは決まっているので、ここでは向き直らない
+      animRange: [2, 7],
+      turnOnStart: false,
+      total: 42,
       animFps: 14,
       hits: [
         {
-          start: 16,
-          end: 32,
+          start: 3,
+          end: 19,
           box: { x: 14, y: 34, w: 128, h: 150 },
           damage: 138,
           hitstun: 34,
           hitstop: 11,
           pushHit: 11,
           guardBreak: true,
+          knockdown: true,
         },
       ],
       // 当てたらそこで止まる。空振りすると走り抜けて大きな隙になる。
-      motion: [{ start: 14, end: 32, vx: 9.6, stopOnHit: true }],
+      motion: [{ start: 1, end: 19, vx: 9.6, stopOnHit: true }],
     },
   }),
 };

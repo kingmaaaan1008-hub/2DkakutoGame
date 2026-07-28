@@ -32,7 +32,11 @@
  * @property {number} pushHit      ヒット時に相手を押し出す速度
  * @property {number} pushBlock    ガード時に相手を押し出す速度
  * @property {boolean} guardBreak  true ならガードを無視して当たる（スキル技）
+ * @property {boolean} knockdown   true ならヒット時にダウンさせる。
+ *                                 打ち上げ → 落下 → 倒れる → 起き上がり、まで一続きで、
+ *                                 倒れている間は無敵。hitstun は使われない。
  * @property {{x:number,y:number}|null} launch  指定すると相手を打ち上げる
+ *                                 （knockdown 時は省略すると既定の打ち上げになる）
  * @property {number} group        同じ group の判定は 1 回の技中に 1 度しか当たらない。
  *                                 多段技は group を変えて並べる。
  */
@@ -46,6 +50,7 @@ const HIT_DEFAULTS = {
   pushHit: 5,
   pushBlock: 3,
   guardBreak: false,
+  knockdown: false,
   launch: null,
   group: 0,
 };
@@ -55,7 +60,11 @@ const MOVE_DEFAULTS = {
   anim: 'idle',
   /** アニメの再生速度(fps)。省略すると技の全体フレームに引き伸ばして再生する。 */
   animFps: null,
-  /** 使用するアニメのコマ範囲 [開始, 終了]。省略時は全コマ。 */
+  /**
+   * 使用するアニメのコマ範囲 [開始, 終了]（0始まり・両端を含む）。省略時は全コマ。
+   * シートの一部だけを使いたいとき用（例: 振りかぶりを捨てて振り下ろしだけ見せる）。
+   * 実際のコマ数は描画側しか知らないので、はみ出した指定は描画時に丸められる。
+   */
   animRange: null,
   /** 空中でも出せるか。 */
   airOk: false,
@@ -68,7 +77,11 @@ const MOVE_DEFAULTS = {
   spawns: [],
   /** 連携入力。{from,to,button,move} の窓の間にボタンを押すと move へ繋がる。 */
   chains: [],
-  /** 技が終わったあとに戻る状態。通常は自動で idle。 */
+  /**
+   * 全体フレームを終えたあと、続けて出す技の id。省略すると idle に戻る。
+   * 「溜めてから突進する」のように、途中で見た目も判定も切り替わる技を
+   * 2 つに分けて書くためのもの。入力は要らず、必ず繋がる。
+   */
   onEnd: null,
 };
 
@@ -81,6 +94,12 @@ export function defineMove(id, raw) {
   const move = { id, ...MOVE_DEFAULTS, ...raw };
   if (!Number.isFinite(move.total) || move.total <= 0) {
     throw new Error(`技 "${id}": total（全体フレーム）が必要です`);
+  }
+  if (move.animRange) {
+    const [from, to] = move.animRange;
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || from > to) {
+      throw new Error(`技 "${id}": animRange は [開始, 終了] の整数（開始 <= 終了）です`);
+    }
   }
   move.hits = (raw.hits ?? []).map((h, i) => {
     const hit = { ...HIT_DEFAULTS, ...h };
@@ -98,6 +117,15 @@ export function defineMove(id, raw) {
 export function defineMoves(table) {
   const out = {};
   for (const [id, raw] of Object.entries(table)) out[id] = defineMove(id, raw);
+  // 繋ぎ先の技名は、遊んでいる最中ではなく読み込み時に間違いに気づきたい
+  for (const move of Object.values(out)) {
+    if (move.onEnd && !out[move.onEnd]) {
+      throw new Error(`技 "${move.id}": onEnd の繋ぎ先 "${move.onEnd}" がありません`);
+    }
+    for (const c of move.chains) {
+      if (!out[c.move]) throw new Error(`技 "${move.id}": 連携先 "${c.move}" がありません`);
+    }
+  }
   return out;
 }
 

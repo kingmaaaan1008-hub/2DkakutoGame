@@ -142,7 +142,8 @@ export class Renderer {
       cam.toScreenX(f.x),
       cam.toScreenY(f.y),
       f.facing,
-      cam.zoom
+      cam.zoom,
+      f.def.animScale?.[f.anim.name] ?? 1
     );
 
     if (flashing) ctx.filter = 'none';
@@ -242,17 +243,21 @@ export class Renderer {
     ctx.restore();
   }
 
-  /** 極太照射ビーム。杖の先からステージ端まで伸ばす。 */
+  /**
+   * 極太照射ビーム。杖の先からステージ端まで伸ばす。
+   * 原点・太さ・長さは技データ側（sim が渡してくる値）に従う。
+   * ここで数値を持つと判定と光線がずれるため。
+   */
   _drawBeam(fx, t) {
     const cam = this.cam;
     const ctx = this.ctx;
-    const originX = fx.x + fx.facing * 52;
-    const originY = fx.y + 123;
-    const length = 1000;
+    const originX = fx.x + fx.facing * fx.ox;
+    const originY = fx.y + fx.oy;
+    const length = fx.length;
 
     // 撃ち始めに一気に太くなり、終わり際に細く消える
     const envelope = t < 0.12 ? t / 0.12 : t > 0.82 ? (1 - t) / 0.18 : 1;
-    const halfH = 49 * envelope * cam.zoom;
+    const halfH = fx.halfHeight * envelope * cam.zoom;
     if (halfH <= 0.5) return;
 
     const x0 = cam.toScreenX(originX);
