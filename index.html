@@ -105,13 +105,14 @@
 
   <!-- 仮想パッド -->
   <div id="touch" class="touch hidden">
+    <!-- 各パッドとも、先頭のボタンが下 2 つの真ん中の上に載る -->
     <div class="pad pad-left">
+      <button class="tbtn act jump top" data-btn="up">ジャンプ</button>
       <button class="tbtn dir" data-btn="left" aria-label="左">◀</button>
       <button class="tbtn dir" data-btn="right" aria-label="右">▶</button>
     </div>
     <div class="pad pad-right">
-      <button class="tbtn act guard" data-btn="guard">ガード</button>
-      <button class="tbtn act jump" data-btn="up">ジャンプ</button>
+      <button class="tbtn act guard top" data-btn="guard">ガード</button>
       <button class="tbtn act attack" data-btn="attack">攻撃</button>
       <button class="tbtn act skill" data-btn="skill">スキル</button>
     </div>

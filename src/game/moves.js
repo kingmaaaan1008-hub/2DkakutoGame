@@ -28,7 +28,6 @@
  * @property {number} hitstun      ヒット時に相手が硬直するフレーム
  * @property {number} blockstun    ガード時に相手が硬直するフレーム
  * @property {number} hitstop      ヒット時に両者の時間が止まるフレーム（手応え演出）
- * @property {number} chip         ガードされたときに与える削りダメージ
  * @property {number} pushHit      ヒット時に相手を押し出す速度
  * @property {number} pushBlock    ガード時に相手を押し出す速度
  * @property {boolean} guardBreak  true ならガードを無視して当たる（スキル技）
@@ -46,7 +45,6 @@ const HIT_DEFAULTS = {
   hitstun: 18,
   blockstun: 12,
   hitstop: 7,
-  chip: 0,
   pushHit: 5,
   pushBlock: 3,
   guardBreak: false,

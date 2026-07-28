@@ -9,6 +9,7 @@
  */
 import { Simulation } from '../src/game/sim.js';
 import { BTN, STATE, ROUND_INTRO_TICKS } from '../src/game/constants.js';
+import { getProjectileDef } from '../src/game/projectiles.js';
 
 let passed = 0;
 let failed = 0;
@@ -141,12 +142,26 @@ section('ガード');
 
   // P2 はガードを押しっぱなし
   run(sim, 1, BTN.ATTACK, BTN.GUARD);
-  for (let i = 0; i < 40 && p2.health === hp0; i += 1) run(sim, 1, 0, BTN.GUARD);
+  for (let i = 0; i < 40 && p2.state !== STATE.BLOCK; i += 1) run(sim, 1, 0, BTN.GUARD);
 
-  check('ガードしても削りは受ける', p2.health < hp0, `hp ${hp0} -> ${p2.health}`);
-  check('ガードすると削りだけで済む', p2.health > hp0 - 20, `hp ${hp0} -> ${p2.health}`);
   check('ガード硬直状態になる', p2.state === STATE.BLOCK || p2.state === STATE.GUARD,
     `state=${p2.state}`);
+  check('ガードするとダメージを受けない', p2.health === hp0, `hp ${hp0} -> ${p2.health}`);
+  // 技を最後まで流しても 0 のまま（削りが復活したら気づける）
+  run(sim, 40, 0, BTN.GUARD);
+  check('技を受け切ってもダメージ0', p2.health === hp0, `hp ${hp0} -> ${p2.health}`);
+}
+
+{
+  // 走っている最中でもガードは出る（攻撃・スキルと同じ扱い）
+  const sim = newSim();
+  const p1 = sim.fighters[0];
+  run(sim, 6, BTN.RIGHT);
+  run(sim, 2, 0);
+  run(sim, 10, BTN.RIGHT);
+  check('2度押しでダッシュになる', p1.state === STATE.DASH, `state=${p1.state}`);
+  run(sim, 8, BTN.RIGHT | BTN.GUARD);
+  check('ダッシュ中でもガードできる', p1.state === STATE.GUARD, `state=${p1.state}`);
 }
 
 {
@@ -274,18 +289,22 @@ section('魔法使い');
 }
 
 {
-  // 連射できる
+  // 連射できる。ただし画面に出せる数には上限があり、撃ち切ると間が空く
   const sim = newSim(['mage', 'swordsman']);
   place(sim, 600, 1400);
   const p1 = sim.fighters[0];
+  const cap = getProjectileDef('bolt').maxAlive;
   let fired = 0;
+  let maxAlive = 0;
   // 攻撃ボタンを叩き続ける
-  for (let i = 0; i < 90; i += 1) {
+  for (let i = 0; i < 600; i += 1) {
     const before = sim.projectiles.length;
     sim.step([i % 6 === 0 ? BTN.ATTACK : 0, 0]);
     if (sim.projectiles.length > before) fired += 1;
+    maxAlive = Math.max(maxAlive, sim.projectiles.length);
   }
   check('連打で複数発撃てる', fired >= 3, `${fired} 発`);
+  check('同時に出る弾は上限まで', maxAlive === cap, `最大 ${maxAlive} 発 / 上限 ${cap}`);
 }
 
 {

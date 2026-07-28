@@ -51,34 +51,37 @@ export default {
     slash1: {
       label: '横切り',
       anim: 'attack2',
-      // 8コマを 14fps で振り切ると約 34 フレーム。そこから total まではその姿勢の
+      // 8コマを 19fps で振り切ると約 25 フレーム。そこから total まではその姿勢の
       // まま構え直す時間で、連携の受付はこの区間に置いてある。
       // （animFps を指定せず total だけ伸ばすと、振り自体が間延びしてしまう）
-      total: 46,
-      animFps: 14,
+      total: 41,
+      animFps: 19,
       hits: [
         {
-          // 剣を横に伸ばしきる 6 コマ目（14fps なので 21〜24 フレーム）に合わせてある。
+          // 剣を横に伸ばしきる 6〜7 コマ目（19fps なので 15〜21 フレーム）に合わせてある。
           // ここを動かすときは下の hitstun / chains も一緒に見直すこと
-          start: 21,
-          end: 25,
-          box: { x: 34, y: 74, w: 140, h: 92 },
+          start: 16,
+          end: 20,
+          // 前方 205 まで。剣自体は 148 までしか届かないので、足りない分は
+          // 踏み込み(下の motion で 30)と斬撃エフェクトで見せている
+          box: { x: 34, y: 74, w: 171, h: 92 },
           damage: 62,
           // 連携の受付を遅らせたぶん、繋がるようにのけぞりも伸ばしてある。
           // blockstun も揃えて、ヒット +3 / ガード -7 は従来どおりにしている
           hitstun: 28,
           blockstun: 18,
           hitstop: 7,
-          chip: 3,
           pushHit: 5.5,
           pushBlock: 3.4,
         },
       ],
-      // 踏み込みは振り抜く動きに乗せる
-      motion: [{ start: 19, end: 23, vx: 2.4 }],
+      // 踏み込みは振り抜く動きに乗せる。前に出た分だけ間合いが伸びる
+      motion: [{ start: 14, end: 19, vx: 5.0 }],
+      // 剣先(148)から判定の先端(205)までを埋める斬撃
+      spawns: [{ frame: 16, type: 'slash', duration: 9, origin: { x: 34, y: 120 }, length: 171, halfHeight: 52 }],
       // 受付は「1段目のモーションを出し切ったあと」。当ててすぐ押しても出ないので、
       // 斬ってから繋ぐ間があり、連打ではなくタイミングで繋ぐ形になる。
-      chains: [{ from: 32, to: 44, button: 'attack', move: 'slash2' }],
+      chains: [{ from: 26, to: 39, button: 'attack', move: 'slash2' }],
     },
 
     // 2段目。踏み込みが深く、ガードさせても有利。
@@ -101,12 +104,13 @@ export default {
           hitstun: 25,
           blockstun: 15,
           hitstop: 9,
-          chip: 6,
           pushHit: 8,
           pushBlock: 5,
         },
       ],
       motion: [{ start: 12, end: 17, vx: 3.4 }],
+      // 振り下ろしは剣が下を向くぶん横に届かないので、こちらも斬撃で見せる
+      spawns: [{ frame: 15, type: 'slash', duration: 11, origin: { x: 30, y: 115 }, length: 158, halfHeight: 63 }],
     },
 
     // スキル: ガード不能の突進。当たれば吹き飛ばしてダウンを奪う。

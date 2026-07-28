@@ -14,9 +14,18 @@ export const PROJECTILES = {
   bolt: {
     radius: 20,
     speed: 7.2,
-    /** 1ティックあたり、どれだけ相手方向へ向きを寄せるか。1.0 で即座に真っ直ぐ向く。 */
-    turnRate: 0.075,
+    /**
+     * 1ティックあたり、どれだけ相手方向へ向きを寄せるか。1.0 で即座に真っ直ぐ向く。
+     * 曲がりが強いと避ける余地が無くなるので、ジャンプで抜けられる程度に抑えてある。
+     */
+    turnRate: 0.05,
     lifetime: 160,
+    /**
+     * 同時に出しておける数。連射そのものは残しつつ、撃ち切ると弾切れの間が空く。
+     * これが無いと寿命 160F ÷ 連射間隔 16F で常時 10 発が浮き、
+     * 相手に近づく隙間が無くなる。
+     */
+    maxAlive: 2,
     /**
      * 発生位置（足元原点・前方向が正）。杖の先端。
      * cast シートで弾が出る 5 コマ目の水晶の位置の実測値。杖を頭上に掲げた形なので
@@ -27,7 +36,6 @@ export const PROJECTILES = {
     hitstun: 16,
     blockstun: 11,
     hitstop: 5,
-    chip: 4,
     pushHit: 3.4,
     pushBlock: 2,
     guardBreak: false,
@@ -38,6 +46,11 @@ export const PROJECTILES = {
     color: '#7fe4ff',
   },
 };
+
+/** 飛び道具として登録されている type か。外れたものは見た目エフェクト扱いになる。 */
+export function isProjectile(type) {
+  return Object.prototype.hasOwnProperty.call(PROJECTILES, type);
+}
 
 export function getProjectileDef(type) {
   const def = PROJECTILES[type];

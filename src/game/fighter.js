@@ -359,7 +359,7 @@ export class Fighter {
       this.facing = opponent.x >= this.x ? 1 : -1;
     }
 
-    // 行動の優先順位: 技 > ジャンプ > ダッシュ > ガード > 歩き
+    // 行動の優先順位: 技 > ジャンプ > ガード > ダッシュ > 歩き
     if (this._takeBuffered('skill')) {
       this.startMove(this.def.skillMove, opponent);
       return;
@@ -370,6 +370,15 @@ export class Fighter {
     }
     if (this._takeBuffered('jump')) {
       this._jump(dir);
+      return;
+    }
+
+    // ダッシュより先に見る。走っている最中でもガードは利く
+    // （技は下の分岐より前で拾っているので、ガードだけ利かないと操作感がちぐはぐになる）
+    if (this.guardHeld) {
+      this.state = STATE.GUARD;
+      this.vx = 0;
+      this.setAnim(this.def.anims.guard, { fps: 14, hold: true });
       return;
     }
 
@@ -388,13 +397,6 @@ export class Fighter {
       if (dir !== this.dashDir) {
         this._toIdle();
       }
-      return;
-    }
-
-    if (this.guardHeld) {
-      this.state = STATE.GUARD;
-      this.vx = 0;
-      this.setAnim(this.def.anims.guard, { fps: 14, hold: true });
       return;
     }
 
@@ -552,14 +554,14 @@ export class Fighter {
     const pushDir = sourceFacing || (this.x >= sourceX ? 1 : -1);
 
     if (blocked) {
-      this.health -= hit.chip;
+      // ガードが成立した打撃はダメージ 0。削りは無い。
+      // 体力を減らせるのは guardBreak を持つ技（＝スキル）だけ、という切り分け。
       this.state = STATE.BLOCK;
       this.stateTimer = 0;
       this.stunTicks = hit.blockstun;
       this.vx = pushDir * hit.pushBlock;
       this.setAnim(this.def.anims.guard, { fps: 14, hold: true, restart: true });
       sim.addEffect('block', this.x + pushDir * -30, this.y + 120);
-      if (this.health <= 0) this._die(sim);
       return 'block';
     }
 

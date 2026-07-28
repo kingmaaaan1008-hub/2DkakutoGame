@@ -218,14 +218,21 @@ html, body {
 .touch { position: absolute; inset: 0; pointer-events: none; }
 .touch.hidden { display: none; }
 
-.pad { position: absolute; bottom: calc(10px + var(--safe-b)); display: flex; gap: 10px; }
-.pad-left { left: calc(12px + var(--safe-l)); }
-.pad-right {
-  right: calc(12px + var(--safe-r));
+/*
+ * 左右どちらのパッドも「下段に 2 つ・その真ん中の上に 1 つ」。
+ * 上段のボタン(.top)は 2 列ぶんにまたがるので、下 2 つの中央に来る。
+ */
+.pad {
+  position: absolute;
+  bottom: calc(10px + var(--safe-b));
   display: grid;
   grid-template-columns: repeat(2, auto);
-  gap: 9px;
+  gap: 10px;
+  justify-items: center;
 }
+.pad .top { grid-column: 1 / -1; }
+.pad-left { left: calc(12px + var(--safe-l)); }
+.pad-right { right: calc(12px + var(--safe-r)); gap: 9px; }
 
 .tbtn {
   pointer-events: auto;

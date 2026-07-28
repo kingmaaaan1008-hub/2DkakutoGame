@@ -147,6 +147,52 @@ export class Renderer {
     );
 
     if (flashing) ctx.filter = 'none';
+
+    // キャラ定義に guardWall があれば、ガード中だけ前に張る
+    if (f.def.guardWall && (f.state === STATE.GUARD || f.state === STATE.BLOCK)) {
+      this._drawGuardWall(f);
+    }
+  }
+
+  /**
+   * ガード中に前へ張る光の壁。魔法使いのように、腕で受けるのではなく
+   * 魔力で防いでいるキャラ用。キャラ定義の guardWall で位置と大きさを決める。
+   */
+  _drawGuardWall(f) {
+    const cam = this.cam;
+    const ctx = this.ctx;
+    const w = f.def.guardWall;
+    const cx = cam.toScreenX(f.x + f.facing * w.x);
+    const cy = cam.toScreenY(f.y + w.y);
+    const halfW = (w.w / 2) * cam.zoom;
+    const halfH = (w.h / 2) * cam.zoom;
+
+    // 受けた瞬間だけ強く光る
+    const impact = f.state === STATE.BLOCK ? 1 : 0;
+    // ゆらぎ。stateTimer はシミュレーション側の値なのでリプレイでも同じ揺れになる
+    const wave = Math.sin(f.stateTimer * 0.22) * 0.5 + 0.5;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.45 + wave * 0.15 + impact * 0.35;
+
+    const grad = ctx.createLinearGradient(cx - halfW, 0, cx + halfW, 0);
+    grad.addColorStop(0, 'rgba(90, 160, 255, 0)');
+    grad.addColorStop(0.5, w.color ?? 'rgba(150, 215, 255, 0.85)');
+    grad.addColorStop(1, 'rgba(90, 160, 255, 0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, halfW, halfH, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 輪郭の線。壁として見えるように芯を 1 本入れる
+    ctx.globalAlpha = 0.5 + wave * 0.2 + impact * 0.4;
+    ctx.strokeStyle = w.color ?? 'rgba(200, 235, 255, 0.9)';
+    ctx.lineWidth = (1.6 + impact * 1.6) * cam.zoom;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, halfW * 0.72, halfH * 0.94, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
   }
 
   _drawProjectile(p) {
@@ -188,6 +234,11 @@ export class Renderer {
 
     if (fx.type === 'beam') {
       this._drawBeam(fx, t);
+      return;
+    }
+
+    if (fx.type === 'slash') {
+      this._drawSlash(fx, t);
       return;
     }
 
@@ -238,6 +289,45 @@ export class Renderer {
       ctx.beginPath();
       ctx.moveTo(sx + Math.cos(a) * r0, sy + Math.sin(a) * r0);
       ctx.lineTo(sx + Math.cos(a) * r1, sy + Math.sin(a) * r1);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * 斬撃。刃の届く先へ弧を描いて、剣そのものより先まで刃圏があることを見せる。
+   * 剣士の剣は短く（実測で前方 148）、判定はそれより先まで出ているので、
+   * この弧が無いと空振りに見える。原点・長さ・太さは技データ側の値に従う。
+   */
+  _drawSlash(fx, t) {
+    const cam = this.cam;
+    const ctx = this.ctx;
+    const originX = fx.x + fx.facing * fx.ox;
+    const originY = fx.y + fx.oy;
+
+    // 出た瞬間が一番濃く、すぐ薄れて消える
+    const alpha = (1 - t) * (1 - t);
+    if (alpha <= 0.02) return;
+
+    const x = cam.toScreenX(originX);
+    const y = cam.toScreenY(originY);
+    // 出た時点でほぼ伸びきっている。判定が出ている間に短いと空振りに見えるため
+    const r = fx.length * (0.86 + 0.14 * t) * cam.zoom;
+    const half = fx.halfHeight * cam.zoom;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = alpha;
+    ctx.translate(x, y);
+    ctx.scale(fx.facing, 1);
+
+    // 弧そのもの。太い光の帯の上に細い芯を重ねる
+    for (const [w, col] of [[9, 'rgba(130, 190, 255, 0.5)'], [3.5, 'rgba(255, 255, 255, 0.95)']]) {
+      ctx.beginPath();
+      ctx.lineWidth = w * cam.zoom;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = col;
+      ctx.ellipse(0, 0, r, half, 0, -Math.PI * 0.44, Math.PI * 0.44);
       ctx.stroke();
     }
     ctx.restore();

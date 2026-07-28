@@ -20,7 +20,7 @@ import {
 import { Fighter, PUSHBOX_W } from './fighter.js';
 import { toWorldBox, boxesOverlap } from './moves.js';
 import { getCharacter } from './characters/index.js';
-import { getProjectileDef, homeToward } from './projectiles.js';
+import { getProjectileDef, isProjectile, homeToward } from './projectiles.js';
 import { Rng } from '../core/rng.js';
 
 /** ラウンド開始時の立ち位置（ステージ中央からの距離）。 */
@@ -184,22 +184,32 @@ export class Simulation {
 
   /** 技データの spawns から呼ばれる。飛び道具でなければ見た目エフェクト扱い。 */
   spawnFromMove(fighter, spawn) {
-    if (spawn.type === 'beam') {
-      this.addEffect('beam', fighter.x, fighter.y, {
+    if (!isProjectile(spawn.type)) {
+      this.addEffect(spawn.type, fighter.x, fighter.y, {
         life: spawn.duration ?? 40,
         follow: fighter.index,
         facing: fighter.facing,
         // 判定と同じ原点・太さ・長さ。描画側はこれを見て描く
         ox: spawn.origin?.x ?? 0,
         oy: spawn.origin?.y ?? 0,
-        halfHeight: spawn.halfHeight ?? 40,
-        length: spawn.length ?? 1000,
+        halfHeight: spawn.halfHeight ?? 0,
+        length: spawn.length ?? 0,
       });
-      this.shake = Math.max(this.shake, 6);
+      if (spawn.shake) this.shake = Math.max(this.shake, spawn.shake);
       return;
     }
 
     const def = getProjectileDef(spawn.type);
+
+    // 出せる数に上限があるなら、超えている間は出ない（技のモーションだけ出る）
+    if (def.maxAlive > 0) {
+      let alive = 0;
+      for (const p of this.projectiles) {
+        if (p.owner === fighter.index && p.type === spawn.type) alive += 1;
+      }
+      if (alive >= def.maxAlive) return;
+    }
+
     this.projectiles.push({
       type: spawn.type,
       owner: fighter.index,

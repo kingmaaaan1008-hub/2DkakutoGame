@@ -74,6 +74,12 @@ export default {
     death: 'death',
   },
 
+  /**
+   * ガード中に前へ張る光の壁（見た目だけ。判定・ダメージには影響しない）。
+   * 足元原点・前方向が正で、中心と大きさを指定する。
+   */
+  guardWall: { x: 80, y: 108, w: 48, h: 212, color: 'rgba(165, 220, 255, 0.9)' },
+
   attackMove: 'bolt',
   skillMove: 'beam',
 
@@ -104,6 +110,7 @@ export default {
           origin: STAFF_TIP,
           halfHeight: BEAM_HALF_HEIGHT,
           length: BEAM_LENGTH,
+          shake: 6,
         },
       ],
       hits: [
