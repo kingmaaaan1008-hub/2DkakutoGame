@@ -8,6 +8,7 @@
  * （オンライン対戦のときは、相手のビットマスクが通信で届くだけ）
  */
 import { BTN } from '../game/constants.js';
+import { GESTURE, SwipeTracker } from './gestures.js';
 
 /** キーボード配列。1台で2人対戦できるように左右で分けてある。 */
 const KEYMAP = [
@@ -49,10 +50,26 @@ const PAD_BUTTONS = {
 
 const STICK_DEADZONE = 0.4;
 
+/** タッチのエリアごとに「押しっぱなし」になりうるビット。指を離すとここを落とす。 */
+const HELD_BY_ZONE = {
+  move: BTN.LEFT | BTN.RIGHT | BTN.DOWN | BTN.DASH,
+  action: BTN.GUARD,
+};
+
+/** 押した瞬間だけ意味を持つ入力を出しておく猶予（ミリ秒）。表示を戻すのに使う。 */
+const CUE_PULSE_MS = 320;
+
 export class InputManager {
   constructor() {
     this.keyBits = [0, 0];
     this.touchBits = [0, 0];
+    /**
+     * 「相手がどちら側にいるか」（+1 = 右）。攻撃エリアのフリックを
+     * 攻撃（相手方向）とスキル（逆方向）に振り分けるのに使う。
+     * 画面を見ている人にとっては前後であって左右ではないので、
+     * 毎フレーム試合の状況から入れ直してもらう。
+     */
+    this.aimDir = [1, 1];
     /**
      * 前回の poll 以降に「押された」ビット。
      * 1/60 秒より短いタップは押下と解放が同じフレームの隙間に収まってしまい、
@@ -65,6 +82,7 @@ export class InputManager {
     this._onKeyDown = null;
     this._onKeyUp = null;
     this._touchCleanup = [];
+    this._zones = [];
   }
 
   attachKeyboard(target = window) {
@@ -110,48 +128,172 @@ export class InputManager {
   }
 
   /**
-   * 画面上の仮想パッドを繋ぐ。
-   * `data-btn="left|right|up|down|attack|skill|guard"` を持つ要素を拾う。
+   * スワイプ操作のエリアを繋ぐ。`data-zone="move|action"` を持つ要素を拾う。
+   *
+   * ボタンを並べる代わりに画面を左右に割って、指を弾いた向きで操作する。
+   * ボタンだと「押す場所を見る」必要があるが、この形なら画面のどこを触っても
+   * よくなるので、目をキャラから離さずに操作できる。
+   *
+   * エリアごとに指1本ぶんの状態を持つので、左右のエリアは同時に使える
+   * （左親指で走りながら右親指で攻撃、ができる）。
    */
-  attachTouch(root) {
-    const NAMES = {
-      left: BTN.LEFT,
-      right: BTN.RIGHT,
-      up: BTN.UP,
-      down: BTN.DOWN,
-      attack: BTN.ATTACK,
-      skill: BTN.SKILL,
-      guard: BTN.GUARD,
-    };
-
-    for (const el of root.querySelectorAll('[data-btn]')) {
-      const bit = NAMES[el.dataset.btn];
-      if (!bit) continue;
+  attachTouchZones(root) {
+    for (const el of root.querySelectorAll('[data-zone]')) {
+      const kind = el.dataset.zone;
+      if (!HELD_BY_ZONE[kind]) continue;
       const slot = Number(el.dataset.player || 0);
+      const tracker = new SwipeTracker();
+      const cue = { rest: '', timer: 0 };
+      let pointerId = null;
+      this._zones.push({ el, cue });
 
-      const press = (e) => {
+      const down = (e) => {
         e.preventDefault();
-        // 指がボタンから少しずれても押しっぱなし扱いにする
-        el.setPointerCapture?.(e.pointerId);
-        this.touchBits[slot] |= bit;
-        this.latch[slot] |= bit;
-        el.classList.add('is-pressed');
-      };
-      const release = (e) => {
-        e.preventDefault();
-        this.touchBits[slot] &= ~bit;
-        el.classList.remove('is-pressed');
+        if (pointerId !== null) return; // 同じエリアに置かれた2本目は無視する
+        pointerId = e.pointerId;
+        // 指がエリアの外へ流れても、離すまでは同じエリアの操作として扱う。
+        // 掴めなくても操作自体は続けられる（エリア内にいる限り move は届く）ので、
+        // ここで例外を上げて以降の処理を落とさないようにする。
+        try {
+          el.setPointerCapture?.(e.pointerId);
+        } catch {
+          /* 既に離された指などは掴めない。無視して続行する */
+        }
+        tracker.start(e.clientX, e.clientY);
+        el.classList.add('is-touched');
       };
 
-      el.addEventListener('pointerdown', press);
-      el.addEventListener('pointerup', release);
-      el.addEventListener('pointercancel', release);
+      const move = (e) => {
+        if (e.pointerId !== pointerId) return;
+        e.preventDefault();
+        const hit = tracker.move(e.clientX, e.clientY, e.timeStamp);
+        if (!hit) return;
+        this._showCue(
+          el,
+          cue,
+          kind === 'move' ? this._applyMoveSwipe(slot, hit) : this._applyActionSwipe(slot, hit)
+        );
+      };
+
+      const up = (e) => {
+        if (e.pointerId !== pointerId) return;
+        e.preventDefault();
+        pointerId = null;
+        tracker.end();
+        this.touchBits[slot] &= ~HELD_BY_ZONE[kind];
+        el.classList.remove('is-touched');
+        this._showCue(el, cue, { cue: '', rest: '' });
+      };
+
+      el.addEventListener('pointerdown', down);
+      el.addEventListener('pointermove', move);
+      el.addEventListener('pointerup', up);
+      el.addEventListener('pointercancel', up);
       this._touchCleanup.push(() => {
-        el.removeEventListener('pointerdown', press);
-        el.removeEventListener('pointerup', release);
-        el.removeEventListener('pointercancel', release);
+        el.removeEventListener('pointerdown', down);
+        el.removeEventListener('pointermove', move);
+        el.removeEventListener('pointerup', up);
+        el.removeEventListener('pointercancel', up);
+        clearTimeout(cue.timer);
       });
     }
+  }
+
+  /**
+   * 移動エリアのスワイプをビットに落とす。
+   *
+   * 横と下は「触っている間ずっと」なので押しっぱなしのビットにする。
+   * ジャンプだけは押した瞬間しか意味が無い（押しっぱなしにすると
+   * 立ち上がりが二度と来ず、2段ジャンプが出せなくなる）ので、
+   * latch に置いて1フレームだけ押されたことにする。
+   *
+   * @returns {{cue: string, rest: string}} 出す表示と、それが消えた後に戻る表示
+   */
+  _applyMoveSwipe(slot, { gesture, repeat }) {
+    const held = BTN.LEFT | BTN.RIGHT | BTN.DOWN | BTN.DASH;
+    const bits = this.touchBits[slot];
+    const dirBit =
+      gesture === GESTURE.LEFT || gesture === GESTURE.UP_LEFT
+        ? BTN.LEFT
+        : gesture === GESTURE.RIGHT || gesture === GESTURE.UP_RIGHT
+          ? BTN.RIGHT
+          : 0;
+    // 同じ向きへ走っている最中なら、指を触れている限り走りを保つ
+    const dashing = repeat || ((bits & BTN.DASH) !== 0 && (bits & dirBit) !== 0);
+    const side = dirBit === BTN.LEFT ? 'Left' : 'Right';
+    const ground = (dashing ? 'dash' : 'walk') + side;
+
+    switch (gesture) {
+      case GESTURE.LEFT:
+      case GESTURE.RIGHT:
+        this.touchBits[slot] = (bits & ~held) | dirBit | (dashing ? BTN.DASH : 0);
+        return { cue: ground, rest: ground };
+
+      case GESTURE.UP_LEFT:
+      case GESTURE.UP_RIGHT:
+        // ジャンプと同じフレームに方向が要る（跳んだ瞬間の向きで軌道が決まる）
+        this.touchBits[slot] = (bits & ~held) | dirBit | (dashing ? BTN.DASH : 0);
+        this.latch[slot] |= BTN.UP;
+        return { cue: 'jump' + side, rest: ground };
+
+      case GESTURE.UP:
+        // 方向を落として真上に跳ぶ
+        this.touchBits[slot] = bits & ~held;
+        this.latch[slot] |= BTN.UP;
+        return { cue: 'jumpUp', rest: '' };
+
+      case GESTURE.DOWN:
+        this.touchBits[slot] = (bits & ~held) | BTN.DOWN;
+        return { cue: 'crouch', rest: 'crouch' };
+
+      default:
+        return { cue: '', rest: '' };
+    }
+  }
+
+  /**
+   * 攻撃エリアのスワイプをビットに落とす。
+   * 相手のいる方へ弾けば攻撃、逆へ弾けばスキル、下へ弾けばガード。
+   * 斜め上は横に丸めるので、上へ流れても技は出る。
+   */
+  _applyActionSwipe(slot, { gesture }) {
+    if (gesture === GESTURE.DOWN) {
+      this.touchBits[slot] |= BTN.GUARD;
+      return { cue: 'guard', rest: 'guard' };
+    }
+    const dir =
+      gesture === GESTURE.LEFT || gesture === GESTURE.UP_LEFT
+        ? -1
+        : gesture === GESTURE.RIGHT || gesture === GESTURE.UP_RIGHT
+          ? 1
+          : 0;
+    if (dir === 0) return { cue: '', rest: '' }; // 真上は割り当てなし
+    // 技を出したらガードは解ける
+    this.touchBits[slot] &= ~BTN.GUARD;
+    const toward = dir === this.aimDir[slot];
+    this.latch[slot] |= toward ? BTN.ATTACK : BTN.SKILL;
+    return { cue: toward ? 'attack' : 'skill', rest: '' };
+  }
+
+  /**
+   * いま何を入力したかをエリア自身に出す。
+   * 表示する文字は CSS 側に持たせてあるので、ここでは状態名だけ渡す。
+   * 押した瞬間だけの入力（ジャンプ・攻撃・スキル）は少し見せてから、
+   * 押しっぱなしの状態（歩き・走り・しゃがみ・ガード）の表示に戻す。
+   */
+  _showCue(el, cue, { cue: name, rest }) {
+    clearTimeout(cue.timer);
+    cue.rest = rest;
+    this._setCue(el, name);
+    if (name === rest) return;
+    cue.timer = setTimeout(() => this._setCue(el, cue.rest), CUE_PULSE_MS);
+  }
+
+  _setCue(el, name) {
+    // 同じ状態が続くときもアニメーションを出し直したいので、いったん外す
+    el.removeAttribute('data-cue');
+    void el.offsetWidth;
+    if (name) el.dataset.cue = name;
   }
 
   /** 接続済みゲームパッドを読む。1本目を P1、2本目を P2 に割り当てる。 */
@@ -194,5 +336,12 @@ export class InputManager {
     this.keyBits = [0, 0];
     this.touchBits = [0, 0];
     this.latch = [0, 0];
+    // ポーズや試合開始をまたいで表示だけ残らないようにする
+    for (const zone of this._zones) {
+      clearTimeout(zone.cue.timer);
+      zone.cue.rest = '';
+      zone.el.classList.remove('is-touched');
+      zone.el.removeAttribute('data-cue');
+    }
   }
 }

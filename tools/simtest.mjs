@@ -11,6 +11,9 @@ import { Simulation } from '../src/game/sim.js';
 import { BTN, STATE, ROUND_INTRO_TICKS, CROUCH_TICKS } from '../src/game/constants.js';
 import { getProjectileDef } from '../src/game/projectiles.js';
 import { getCharacter } from '../src/game/characters/index.js';
+// スワイプ操作は DOM を触らない部分だけ切り出してあるので、ここで検証できる
+import { GESTURE, SwipeTracker, classifySwipe } from '../src/core/gestures.js';
+import { InputManager } from '../src/core/input.js';
 
 let passed = 0;
 let failed = 0;
@@ -812,6 +815,274 @@ section('決定性');
     return JSON.stringify(sim.save());
   })();
   check('巻き戻し後の再実行が一致する', a === b);
+}
+
+// ── ダッシュビット ──────────────────────────────────────────
+// スワイプ操作は「離して押し直す」が作れないので、2度押しの代わりに
+// BTN.DASH で走る意図を直接渡す。
+section('ダッシュビット');
+{
+  const sim = newSim();
+  const p1 = sim.fighters[0];
+  run(sim, 6, BTN.RIGHT | BTN.DASH);
+  check('方向＋DASH で即ダッシュに入る', p1.state === STATE.DASH, `state=${p1.state}`);
+  check('ダッシュ速度が出る', Math.abs(p1.vx) === p1.def.dashSpeed,
+    `vx=${p1.vx} dashSpeed=${p1.def.dashSpeed}`);
+
+  // 方向を離せば止まる（押しっぱなしでも方向が無ければ走らない）
+  run(sim, 2, BTN.DASH);
+  check('方向を離すとダッシュが切れる', p1.state !== STATE.DASH, `state=${p1.state}`);
+}
+
+{
+  const sim = newSim();
+  const p1 = sim.fighters[0];
+  run(sim, 6, BTN.DASH);
+  check('DASH だけでは何も起きない', p1.state === STATE.IDLE && p1.vx === 0, `state=${p1.state}`);
+}
+
+{
+  // 立ち上がりではなく押されている間ずっと見るので、硬直明けに走りへ戻る
+  const sim = newSim();
+  const p1 = sim.fighters[0];
+  const hold = BTN.RIGHT | BTN.DASH;
+  run(sim, 4, hold);
+  check('走り出している', p1.state === STATE.DASH);
+  run(sim, 1, hold | BTN.ATTACK);
+  check('走りから技が出る', p1.state === STATE.MOVE, `state=${p1.state}`);
+  run(sim, p1.def.moves[p1.def.attackMove].total + 2, hold);
+  check('技が終わると押しっぱなしのまま走りに戻る', p1.state === STATE.DASH, `state=${p1.state}`);
+}
+
+{
+  // ガードは走りより優先（既存の優先順位を壊していないこと）
+  const sim = newSim();
+  const p1 = sim.fighters[0];
+  run(sim, 6, BTN.RIGHT | BTN.DASH | BTN.GUARD);
+  check('ガードはダッシュより優先される', p1.state === STATE.GUARD, `state=${p1.state}`);
+}
+
+// ── 斜めジャンプ ────────────────────────────────────────────
+// スワイプの向きをそのまま軌道にするため、跳んだフレームに方向が
+// 入っていることが要件になる。
+section('斜めジャンプ');
+{
+  const sim = newSim();
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP | BTN.RIGHT);
+  check('上＋方向を同じフレームで押すと斜めに跳ぶ', p1.y > 0 && p1.vx > 0,
+    `y=${p1.y.toFixed(1)} vx=${p1.vx}`);
+  check('横速度は jumpVx になる', Math.abs(p1.vx) === p1.def.jumpVx, `vx=${p1.vx}`);
+
+  // 空中でもう一度 上＋方向 → 斜めの2段ジャンプ
+  run(sim, 10, 0);
+  run(sim, 1, BTN.UP | BTN.LEFT);
+  check('2段ジャンプも斜めに跳べる', p1.vx < 0, `vx=${p1.vx}`);
+}
+
+{
+  const sim = newSim();
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  check('上だけなら真上に跳ぶ', p1.y > 0 && p1.vx === 0, `vx=${p1.vx}`);
+
+  // 走っている途中に方向を落として上だけ入れれば、その場で真上へ
+  const sim2 = newSim();
+  const q = sim2.fighters[0];
+  run(sim2, 6, BTN.RIGHT | BTN.DASH);
+  run(sim2, 1, BTN.UP);
+  check('走りから方向を抜いて跳ぶと真上に上がる', q.y > 0 && q.vx === 0, `vx=${q.vx}`);
+}
+
+// ── スワイプの認識 ──────────────────────────────────────────
+// gestures.js は DOM もゲームも知らない純粋な計算なので、ここで直接叩ける。
+section('スワイプの向きの判定');
+{
+  // dy は画面座標なので下が正
+  check('左へ引いたら左', classifySwipe(-40, 0) === GESTURE.LEFT);
+  check('右へ引いたら右', classifySwipe(40, 0) === GESTURE.RIGHT);
+  check('上へ引いたら上', classifySwipe(0, -40) === GESTURE.UP);
+  check('下へ引いたら下', classifySwipe(0, 40) === GESTURE.DOWN);
+  check('右上は斜め右', classifySwipe(30, -30) === GESTURE.UP_RIGHT);
+  check('左上は斜め左', classifySwipe(-30, -30) === GESTURE.UP_LEFT);
+  // 横に弾くと指は下に流れるので、斜め下は横として扱う
+  check('左下は左として扱う', classifySwipe(-40, 22) === GESTURE.LEFT,
+    `=${classifySwipe(-40, 22)}`);
+  check('右下は右として扱う', classifySwipe(40, 22) === GESTURE.RIGHT,
+    `=${classifySwipe(40, 22)}`);
+  // 真下は狭い（±30°）
+  check('ほぼ真下は下', classifySwipe(12, 40) === GESTURE.DOWN, `=${classifySwipe(12, 40)}`);
+}
+
+/** 画面に置いた指1本。drag() で動かすと、認識されたスワイプが返る。 */
+function finger(x0 = 200, y0 = 400) {
+  const tracker = new SwipeTracker();
+  tracker.start(x0, y0);
+  let x = x0;
+  let y = y0;
+  let t = 0;
+  return {
+    drag(dx, dy, ms = 60, steps = 6) {
+      const hits = [];
+      for (let i = 1; i <= steps; i += 1) {
+        const hit = tracker.move(x + (dx * i) / steps, y + (dy * i) / steps, t + (ms * i) / steps);
+        if (hit) hits.push(hit);
+      }
+      x += dx;
+      y += dy;
+      t += ms;
+      return hits;
+    },
+    wait(ms) {
+      t += ms;
+    },
+  };
+}
+
+section('指を離さずに続けて操作する');
+{
+  const f = finger();
+  check('しきい値未満では何も出ない', f.drag(-14, 0).length === 0);
+  const hits = f.drag(-30, 0);
+  check('引き続ければ左スワイプになる', hits.length === 1 && hits[0].gesture === GESTURE.LEFT,
+    JSON.stringify(hits));
+  check('1回目はダッシュ要求ではない', hits[0].repeat === false);
+}
+
+{
+  // 左 → 指を戻す → 左 でダッシュ。戻しを右スワイプと誤認しないこと
+  const f = finger();
+  f.drag(-40, 0);
+  const back = f.drag(30, 0);
+  check('指を戻しただけでは逆向きのスワイプにならない', back.length === 0, JSON.stringify(back));
+  const again = f.drag(-30, 0);
+  check('戻してもう一度引くと2回目になる', again.length === 1 && again[0].gesture === GESTURE.LEFT,
+    JSON.stringify(again));
+  check('同じ向きへ2回でダッシュ要求になる', again[0].repeat === true);
+}
+
+{
+  // 間が空いたらダッシュにはならない
+  const f = finger();
+  f.drag(-40, 0);
+  f.drag(30, 0);
+  f.wait(1000);
+  const again = f.drag(-30, 0);
+  check('間が空くとダッシュにはならない', again[0].repeat === false);
+}
+
+{
+  // 横に走らせたまま上へ切り返す（走り → 斜めジャンプ）
+  const f = finger();
+  f.drag(40, 0);
+  const up = f.drag(6, -34);
+  check('横から上へ切り返せる', up.length === 1 && up[0].gesture === GESTURE.UP_RIGHT,
+    JSON.stringify(up));
+}
+
+{
+  // しゃがみから横へ切り返す
+  const f = finger();
+  const down = f.drag(0, 36);
+  check('下へ引くとしゃがみ', down[0].gesture === GESTURE.DOWN);
+  const side = f.drag(-32, 4);
+  check('しゃがみから横へ切り返せる', side.length === 1 && side[0].gesture === GESTURE.LEFT,
+    JSON.stringify(side));
+}
+
+{
+  // 指を戻さずに長く引き続けた場合も2回目として拾う
+  const f = finger();
+  f.drag(-30, 0);
+  const far = f.drag(-56, 0);
+  check('戻さず引き続けてもダッシュに入れる', far.length === 1 && far[0].repeat === true,
+    JSON.stringify(far));
+}
+
+{
+  const f = finger();
+  f.drag(-40, 0);
+  // 指を離せば次のタッチまで何も出ない
+  const t = new SwipeTracker();
+  check('触っていなければ動かしても無反応', t.move(0, 0, 0) === null);
+}
+
+// ── スワイプ → 入力ビット ───────────────────────────────────
+// InputManager の振り分けは DOM を触らないので、そのまま呼べる。
+section('スワイプから入力ビットへの振り分け');
+{
+  const im = new InputManager();
+  const bits = () => im.touchBits[0];
+  const latched = () => {
+    const v = im.latch[0];
+    im.latch[0] = 0;
+    return v;
+  };
+
+  im._applyMoveSwipe(0, { gesture: GESTURE.LEFT, repeat: false });
+  check('左スワイプで左が押しっぱなしになる', bits() === BTN.LEFT, `bits=${bits()}`);
+
+  im._applyMoveSwipe(0, { gesture: GESTURE.LEFT, repeat: true });
+  check('左2回で左＋DASH になる', bits() === (BTN.LEFT | BTN.DASH), `bits=${bits()}`);
+
+  im._applyMoveSwipe(0, { gesture: GESTURE.LEFT, repeat: false });
+  check('走ったまま同じ向きへ弾いても走りを保つ', bits() === (BTN.LEFT | BTN.DASH),
+    `bits=${bits()}`);
+
+  im._applyMoveSwipe(0, { gesture: GESTURE.RIGHT, repeat: false });
+  check('逆へ弾くと歩きに戻る', bits() === BTN.RIGHT, `bits=${bits()}`);
+
+  im._applyMoveSwipe(0, { gesture: GESTURE.UP_LEFT, repeat: false });
+  check('斜め上は方向を押しっぱなしにする', bits() === BTN.LEFT, `bits=${bits()}`);
+  check('斜め上でジャンプが1フレーム入る', latched() === BTN.UP);
+
+  im._applyMoveSwipe(0, { gesture: GESTURE.UP, repeat: false });
+  check('真上スワイプは方向を落とす', bits() === 0, `bits=${bits()}`);
+  check('真上スワイプでもジャンプは入る', latched() === BTN.UP);
+
+  im._applyMoveSwipe(0, { gesture: GESTURE.DOWN, repeat: false });
+  check('下スワイプでしゃがみが押しっぱなしになる', bits() === BTN.DOWN, `bits=${bits()}`);
+
+  im._applyMoveSwipe(0, { gesture: GESTURE.RIGHT, repeat: false });
+  check('しゃがみから横へ弾くとしゃがみが解ける', bits() === BTN.RIGHT, `bits=${bits()}`);
+}
+
+{
+  const im = new InputManager();
+  const latched = () => {
+    const v = im.latch[0];
+    im.latch[0] = 0;
+    return v;
+  };
+
+  // 相手が右にいるとき
+  im.aimDir[0] = 1;
+  im._applyActionSwipe(0, { gesture: GESTURE.RIGHT });
+  check('相手の方へフリックで攻撃', latched() === BTN.ATTACK);
+  im._applyActionSwipe(0, { gesture: GESTURE.LEFT });
+  check('逆へフリックでスキル', latched() === BTN.SKILL);
+
+  // 相手が左に回り込んだら、同じ操作の意味が入れ替わる
+  im.aimDir[0] = -1;
+  im._applyActionSwipe(0, { gesture: GESTURE.LEFT });
+  check('相手が左なら左フリックが攻撃', latched() === BTN.ATTACK);
+  im._applyActionSwipe(0, { gesture: GESTURE.RIGHT });
+  check('相手が左なら右フリックがスキル', latched() === BTN.SKILL);
+
+  // 斜め上は横に丸める（上に流れても技は出る）
+  im.aimDir[0] = 1;
+  im._applyActionSwipe(0, { gesture: GESTURE.UP_RIGHT });
+  check('斜め上へのフリックも技になる', latched() === BTN.ATTACK);
+
+  im._applyActionSwipe(0, { gesture: GESTURE.DOWN });
+  check('下フリックでガードが押しっぱなしになる', im.touchBits[0] === BTN.GUARD,
+    `bits=${im.touchBits[0]}`);
+  im._applyActionSwipe(0, { gesture: GESTURE.RIGHT });
+  check('技を出すとガードは解ける', im.touchBits[0] === 0, `bits=${im.touchBits[0]}`);
+  check('ガードを解いて出した技は攻撃', latched() === BTN.ATTACK);
+
+  im._applyActionSwipe(0, { gesture: GESTURE.UP });
+  check('攻撃エリアの真上は割り当てなし', im.touchBits[0] === 0 && latched() === 0);
 }
 
 console.log(`\n合計 ${passed + failed} 件: 成功 ${passed} / 失敗 ${failed}`);

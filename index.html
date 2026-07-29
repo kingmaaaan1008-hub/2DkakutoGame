@@ -56,7 +56,14 @@
       <details class="help">
         <summary>操作方法</summary>
         <div class="help-body">
-          <p><b>スマホ</b>: 画面下のボタン。◀▶ を素早く2回で <b>ダッシュ</b>。ジャンプ2回で <b>2段ジャンプ</b>。</p>
+          <p><b>スマホ</b>: 画面を左右に割ってスワイプで操作します。ボタンはありません。</p>
+          <p><b>画面左半分 = 移動</b>。横スワイプで歩き（<b>同じ方向へ2回で走る</b>）、
+            斜め上で<b>斜めジャンプ</b>、真上で<b>垂直ジャンプ</b>、下で<b>しゃがみ</b>。
+            <b>指を触れている間その入力が続きます</b>（離すと止まる）。
+            空中でもう一度上へスワイプすれば <b>2段ジャンプ</b>です。</p>
+          <p><b>画面右半分 = 攻撃</b>。<b>相手のいる方へフリックで攻撃</b>、
+            <b>逆へフリックでスキル</b>、<b>下へフリックでガード</b>（指を離すまでガード継続）。</p>
+          <p>左右は同時に使えます。左の親指で走りながら右の親指で技を出せます。</p>
           <p><b>1P キーボード</b>: A / D 移動、W ジャンプ、S しゃがみ、J 攻撃、K スキル、L ガード</p>
           <p><b>2P キーボード</b>: ← / → 移動、↑ ジャンプ、↓ しゃがみ、, 攻撃、. スキル、/ ガード</p>
           <p><b>ゲームパッド</b>: スティック・十字キー移動（下でしゃがみ）、A 攻撃、X スキル、B ガード、Y ジャンプ</p>
@@ -125,19 +132,29 @@
     <p class="net-status" id="net-status"></p>
   </div>
 
-  <!-- 仮想パッド -->
+  <!--
+    スワイプ操作のエリア。画面を左右に割って、左半分が移動・右半分が攻撃。
+    ボタンを置かないので、指の位置を目で確かめる必要がない。
+    表示する文字は styles.css の [data-cue] 側に持たせている。
+  -->
   <div id="touch" class="touch hidden">
-    <!-- 各パッドとも、先頭のボタンが下 2 つの真ん中の上に載る -->
-    <div class="pad pad-left">
-      <button class="tbtn act jump top" data-btn="up">ジャンプ</button>
-      <button class="tbtn dir" data-btn="left" aria-label="左">◀</button>
-      <button class="tbtn dir" data-btn="right" aria-label="右">▶</button>
-      <button class="tbtn act crouch bottom" data-btn="down">しゃがみ</button>
+    <div class="zone zone-move" data-zone="move" data-player="0">
+      <div class="zone-label"></div>
+      <div class="zone-cue">
+        <b>移動</b>
+        <span><i>◀▶</i> 歩く（2回で走る）</span>
+        <span><i>↖ ↑ ↗</i> ジャンプ</span>
+        <span><i>↓</i> しゃがみ</span>
+      </div>
     </div>
-    <div class="pad pad-right">
-      <button class="tbtn act guard top" data-btn="guard">ガード</button>
-      <button class="tbtn act attack" data-btn="attack">攻撃</button>
-      <button class="tbtn act skill" data-btn="skill">スキル</button>
+    <div class="zone zone-action" data-zone="action" data-player="0">
+      <div class="zone-label"></div>
+      <div class="zone-cue">
+        <b>攻撃</b>
+        <span><i>敵の方へ</i> 攻撃</span>
+        <span><i>逆の方へ</i> スキル</span>
+        <span><i>↓</i> ガード</span>
+      </div>
     </div>
   </div>
 

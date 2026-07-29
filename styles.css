@@ -1,6 +1,6 @@
 /* =============================================================
    画面まわりのスタイル。
-   ゲーム描画は canvas なので、ここは UI（メニュー・仮想パッド）担当。
+   ゲーム描画は canvas なので、ここは UI（メニュー・スワイプ操作エリア）担当。
    スマホの安全領域(ノッチ)と、指で押しやすいサイズを優先している。
    ============================================================= */
 
@@ -42,6 +42,8 @@ html, body {
 .screen {
   position: absolute;
   inset: 0;
+  /* 操作エリアと HUD より前に出す（ポーズ中に下の操作を拾わないため） */
+  z-index: 4;
   display: none;
   align-items: center;
   justify-content: center;
@@ -197,10 +199,14 @@ html, body {
 
 /* ── 対戦中のオーバーレイ ─────────────────────────────── */
 
-#hud-overlay { position: absolute; inset: 0; pointer-events: none; }
+/*
+ * スワイプ操作エリア（z-index 2）が画面全面を覆うので、
+ * その上に載せないとポーズボタンが押せなくなる。
+ */
+#hud-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
 #hud-overlay.hidden { display: none; }
 
-/* 仮想パッドは左右の下隅を使うので、ポーズは下辺中央に置いて重ならないようにする */
+/* 操作エリアのラベルは左右それぞれの下辺中央に出るので、ポーズは画面中央に置く */
 .icon-btn {
   position: absolute;
   left: 50%;
@@ -225,61 +231,161 @@ html, body {
   text-shadow: 0 2px 8px #000;
 }
 
-/* ── 仮想パッド ───────────────────────────────────────── */
-
-.touch { position: absolute; inset: 0; pointer-events: none; }
-.touch.hidden { display: none; }
+/* ── スワイプ操作エリア ───────────────────────────────── */
 
 /*
- * 左右どちらのパッドも「中段に 2 つ・その真ん中の上下に 1 つずつ」。
- * .top / .bottom は 2 列ぶんにまたがるので、中央の 2 つの真ん中に来る。
- * 左パッドは ジャンプ / ◀ ▶ / しゃがみ の十字になる。
+ * 画面を左右に割って、左半分が移動・右半分が攻撃。
+ * ボタンを置かない代わりに、
+ *   - 何ができるかを薄い凡例（.zone-cue）で常に出しておく
+ *   - いま何が入っているかを大きなラベル（.zone-label）で返す
+ * の 2 つで補っている。指を置いている間は凡例を消して邪魔にならないようにする。
+ *
+ * 入力の状態名は input.js が data-cue に入れるだけで、
+ * **表示する文字はこのファイルが持つ**（ロジック側に UI の文言を置かないため）。
  */
-.pad {
+
+.touch { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+.touch.hidden { display: none; }
+
+.zone {
   position: absolute;
-  bottom: calc(10px + var(--safe-b));
-  display: grid;
-  grid-template-columns: repeat(2, auto);
-  gap: 10px;
-  justify-items: center;
-}
-.pad .top,
-.pad .bottom { grid-column: 1 / -1; }
-.pad-left { left: calc(12px + var(--safe-l)); }
-.pad-right { right: calc(12px + var(--safe-r)); gap: 9px; }
-
-.tbtn {
+  top: 0;
+  bottom: 0;
+  width: 50%;
   pointer-events: auto;
-  font: inherit;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.92);
-  background: rgba(24, 29, 50, 0.55);
-  border: 2px solid rgba(255, 255, 255, 0.22);
-  border-radius: 50%;
-  backdrop-filter: blur(2px);
-  cursor: pointer;
   touch-action: none;
-  transition: background 0.06s, transform 0.06s;
+  overflow: hidden;
+  /*
+   * 入力ごとの色。個々の状態で上書きする。
+   * 透明度を変えて何度も使うので、色そのものではなく成分で持つ。
+   */
+  --cue: 207, 216, 245;
 }
-.tbtn.is-pressed { background: rgba(120, 160, 255, 0.55); transform: scale(0.94); }
+.zone-move { left: 0; }
+.zone-action { right: 0; }
 
-.tbtn.dir { width: 72px; height: 72px; font-size: 26px; }
-.tbtn.act { width: 68px; height: 68px; font-size: 12px; }
-.tbtn.attack { background: rgba(200, 70, 60, 0.45); }
-.tbtn.skill { background: rgba(180, 110, 240, 0.45); }
-.tbtn.jump { background: rgba(70, 150, 210, 0.45); }
-.tbtn.guard { background: rgba(90, 190, 140, 0.45); }
-.tbtn.crouch { background: rgba(210, 160, 60, 0.45); }
+/*
+ * 触っている間だけ下辺がうっすら光る。どちら側を掴んでいるかの手掛かり。
+ * 縦持ちだと画面が高くて広がりすぎるので、上限を付けて下辺に留める。
+ */
+.zone::before {
+  content: '';
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: min(45%, 210px);
+  background: linear-gradient(to top, rgba(var(--cue), 0.2), rgba(var(--cue), 0));
+  opacity: 0;
+  transition: opacity 0.16s;
+  pointer-events: none;
+}
+.zone.is-touched::before { opacity: 1; }
 
-/* 画面が低いとき（横向きスマホ）はボタンを少し詰める */
+/*
+ * 左右の境目を示すヘアライン。
+ * 上端まで引くと背景の絵を縦に切ってしまうので、下half だけに見せて上へ消す。
+ */
+.zone-move::after {
+  content: '';
+  position: absolute;
+  top: 45%;
+  bottom: 0;
+  right: 0;
+  width: 1px;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.09));
+  pointer-events: none;
+}
+
+/* ── 凡例 ── */
+
+.zone-cue {
+  position: absolute;
+  left: 0; right: 0;
+  bottom: calc(11px + var(--safe-b));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: rgba(232, 236, 247, 0.34);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  opacity: 1;
+  transition: opacity 0.16s;
+}
+.zone-cue b {
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  color: rgba(232, 236, 247, 0.3);
+  margin-bottom: 2px;
+}
+.zone-cue i { font-style: normal; color: rgba(232, 236, 247, 0.62); }
+/* 操作中は凡例を引っ込め、状態ラベルに場所を譲る */
+.zone.is-touched .zone-cue { opacity: 0; }
+
+/* ── いま入っている入力 ── */
+
+.zone-label {
+  position: absolute;
+  left: 50%;
+  bottom: calc(26px + var(--safe-b));
+  transform: translateX(-50%);
+  padding: 7px 16px;
+  border-radius: 999px;
+  border: 1.5px solid rgba(var(--cue), 0.55);
+  /* 色の膜を暗い下地に重ねる（1 プロパティで済ませるため gradient を使う） */
+  background:
+    linear-gradient(rgba(var(--cue), 0.16), rgba(var(--cue), 0.16)),
+    rgba(8, 10, 20, 0.74);
+  color: rgb(var(--cue));
+  font-size: 15px;
+  font-weight: 700;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.18s;
+  pointer-events: none;
+}
+.zone[data-cue] .zone-label {
+  opacity: 1;
+  animation: cue-pop 0.2s ease-out;
+}
+@keyframes cue-pop {
+  from { transform: translateX(-50%) scale(0.82); opacity: 0; }
+  to { transform: translateX(-50%) scale(1); opacity: 1; }
+}
+
+/* 状態名 → 表示。ここが input.js との唯一の取り決め */
+.zone[data-cue='walkLeft'] .zone-label::after { content: '◀ 歩く'; }
+.zone[data-cue='walkRight'] .zone-label::after { content: '歩く ▶'; }
+.zone[data-cue='dashLeft'] .zone-label::after { content: '◀◀ 走る'; }
+.zone[data-cue='dashRight'] .zone-label::after { content: '走る ▶▶'; }
+.zone[data-cue='jumpLeft'] .zone-label::after { content: '↖ ジャンプ'; }
+.zone[data-cue='jumpRight'] .zone-label::after { content: 'ジャンプ ↗'; }
+.zone[data-cue='jumpUp'] .zone-label::after { content: '↑ ジャンプ'; }
+.zone[data-cue='crouch'] .zone-label::after { content: '↓ しゃがみ'; }
+.zone[data-cue='attack'] .zone-label::after { content: '攻撃'; }
+.zone[data-cue='skill'] .zone-label::after { content: 'スキル'; }
+.zone[data-cue='guard'] .zone-label::after { content: 'ガード'; }
+
+/* 入力ごとの色 */
+.zone[data-cue^='walk'] { --cue: 169, 189, 240; }
+.zone[data-cue^='dash'] { --cue: 255, 212, 94; }
+.zone[data-cue^='jump'] { --cue: 111, 180, 221; }
+.zone[data-cue='crouch'] { --cue: 224, 166, 60; }
+.zone[data-cue='attack'] { --cue: 255, 123, 107; }
+.zone[data-cue='skill'] { --cue: 201, 140, 245; }
+.zone[data-cue='guard'] { --cue: 110, 210, 160; }
+
+/* 画面が低いとき（横向きスマホ）は文字を詰めて、キャラに被る面積を減らす */
 @media (max-height: 430px) {
-  .tbtn.dir { width: 62px; height: 62px; font-size: 22px; }
-  .tbtn.act { width: 58px; height: 58px; font-size: 11px; }
+  .zone-cue { font-size: 10px; gap: 0; }
+  .zone-cue b { display: none; }
+  .zone-label { font-size: 13px; padding: 5px 13px; bottom: calc(20px + var(--safe-b)); }
 }
 
-/* 縦持ちのときだけ出る案内。下辺は仮想パッドで埋まっているので上寄せにする */
+/* 縦持ちのときだけ出る案内。下辺は操作エリアの凡例で埋まっているので上寄せにする */
 .rotate-hint {
   position: absolute;
+  z-index: 3;
   left: 50%; top: 22%;
   transform: translateX(-50%);
   font-size: 12px;

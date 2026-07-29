@@ -98,7 +98,7 @@ async function boot() {
   app.renderer = new Renderer(dom.canvas, app.sprites);
   app.loop = new GameLoop(update, render);
   app.input.attachKeyboard(window);
-  app.input.attachTouch(dom.touch);
+  app.input.attachTouchZones(dom.touch);
 
   app.select = new CharacterSelect(
     {
@@ -274,9 +274,24 @@ async function connectOnline() {
 
 // ── ループ ─────────────────────────────────────────────────
 
+/**
+ * 画面右半分のフリックを「相手の方＝攻撃 / 逆＝スキル」に振り分けるために、
+ * 相手がどちら側にいるかを入力側へ伝える。
+ * キャラの `facing` ではなく実際の位置関係を見るのは、空中で相手に
+ * 背を向けている間もフリックの向きと出る技が食い違わないようにするため。
+ */
+function updateAimDir() {
+  const me = app.mode === 'online' ? (app.onlineSlot ?? 0) : 0;
+  const [a, b] = app.sim.fighters;
+  const self = me === 0 ? a : b;
+  const foe = me === 0 ? b : a;
+  app.input.aimDir[0] = foe.x >= self.x ? 1 : -1;
+}
+
 function update() {
   if (!app.sim || app.paused) return;
 
+  updateAimDir();
   const bits = app.input.poll();
   // オンラインでは自分の入力だけが意味を持つ（スロットは相手側で解決される）
   app.session.advance(bits);

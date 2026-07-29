@@ -275,6 +275,10 @@ export class Fighter {
     const dir = left && right ? 0 : left ? -1 : right ? 1 : 0;
     const down = (input & BTN.DOWN) !== 0;
 
+    // ダッシュビットは押されている間ずっと有効。2度押しと違って
+    // 立ち上がりを見ないので、硬直で走りが途切れても押しっぱなしなら走りに戻る。
+    if (dir !== 0 && input & BTN.DASH) dashRequest = dir;
+
     return { dir, dashRequest, down };
   }
 
