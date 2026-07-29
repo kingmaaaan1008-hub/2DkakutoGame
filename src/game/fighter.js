@@ -16,12 +16,27 @@ import {
   DASH_TAP_WINDOW,
   STAGE_WIDTH,
   STAGE_MARGIN,
+  AIR_JUMPS,
+  AIR_JUMP_VY_SCALE,
+  CROUCH_TICKS,
 } from './constants.js';
 
 /** 押し合い判定の幅。相手とめり込まないための箱。見た目の重なり具合はここで決まる。 */
 export const PUSHBOX_W = 86;
 /** やられ判定の既定値（足元原点・上が正）。 */
 export const HURTBOX = { x: -38, y: 0, w: 76, h: 198 };
+/**
+ * しゃがみ切ったときのやられ判定。低く・少し広くなる。
+ *
+ * 高さ 100 という数字には意味がある。魔法使いのビームは杖の先
+ * （足元から 156）を中心に上下 49 ＝ 地上から 107〜205 を薙ぐので、
+ * **100 まで縮めばビームの下をくぐれる**。
+ * ここを 107 以上にするとしゃがんでもビームに当たるようになるので、
+ * ビーム側（mage.js の STAFF_TIP / BEAM_HALF_HEIGHT）と一緒に見ること。
+ */
+export const CROUCH_HURTBOX = { w: 84, h: 100 };
+/** しゃがめばくぐれる高さ。技データの検算や CPU の判断に使う。 */
+export const CROUCH_CLEAR_Y = CROUCH_HURTBOX.h;
 
 /** 着地硬直。ジャンプ攻撃を作るときはここを技側から上書きできるようにする。 */
 const LAND_LAG = 7;
@@ -39,9 +54,6 @@ const DOWN_GETUP_TICKS = 28;
 const KNOCKDOWN_LAUNCH_VY = 9.5;
 /** ダウンの各段階。 */
 const DOWN_PHASE = { AIR: 0, LIE: 1, GETUP: 2 };
-/** コンボ補正。段数が増えるほどダメージを減らし、永久コンボを防ぐ。 */
-const COMBO_SCALE_STEP = 0.1;
-const COMBO_SCALE_MIN = 0.4;
 
 export class Fighter {
   /**
@@ -68,13 +80,30 @@ export class Fighter {
     this.moveId = null;
     this.moveFrame = -1;
     this.moveHitLanded = false;
+    /** いま出している技が空中技か（着地で中断されるのはこれだけ）。 */
+    this.moveAir = false;
     this.usedGroups = [];
 
     this.hitstop = 0;
+    this.landLag = LAND_LAG;
     this.downPhase = DOWN_PHASE.AIR;
     this.guardHeld = false;
     this.walkDir = 0;
     this.dashDir = 0;
+    /** 残りの空中ジャンプ回数。 */
+    this.airJumps = 0;
+    /**
+     * しゃがみの深さ（0 = 立ち, CROUCH_TICKS = しゃがみ切り）。
+     * 絵のコマもやられ判定の高さもこの 1 個の値から作るので、
+     * 「絵はまだ立っているのに判定だけ縮んでいる」が起きない。
+     */
+    this.crouchTimer = 0;
+    /**
+     * 致命傷を負っているか。
+     * このゲームは一発が即死なので、当たった時点でここが true になる。
+     * ただしその場では倒れず、コンボが途切れた瞬間に崩れ落ちる（_collapse）。
+     */
+    this.doomed = false;
 
     this.prevInput = 0;
     this.tapDir = 0;
@@ -125,17 +154,26 @@ export class Fighter {
       (this.state === STATE.IDLE ||
         this.state === STATE.WALK ||
         this.state === STATE.DASH ||
+        this.state === STATE.CROUCH ||
         this.state === STATE.GUARD)
     );
   }
 
+  /** しゃがみ具合 0〜1。0 が立ち、1 がしゃがみ切り。 */
+  get crouchDepth() {
+    return this.crouchTimer / CROUCH_TICKS;
+  }
+
+  /**
+   * やられ判定。しゃがんでいる途中は、その深さぶんだけ低く・広くなる。
+   * 補間しているので、しゃがみ始めた瞬間にビームをくぐれるわけではなく、
+   * 「しゃがみ切るまでの CROUCH_TICKS を先に払う」必要がある。
+   */
   hurtBox() {
-    return {
-      x: this.x + HURTBOX.x,
-      y: this.y + HURTBOX.y,
-      w: HURTBOX.w,
-      h: HURTBOX.h,
-    };
+    const t = this.crouchDepth;
+    const w = HURTBOX.w + (CROUCH_HURTBOX.w - HURTBOX.w) * t;
+    const h = HURTBOX.h + (CROUCH_HURTBOX.h - HURTBOX.h) * t;
+    return { x: this.x - w / 2, y: this.y + HURTBOX.y, w, h };
   }
 
   currentMove() {
@@ -235,8 +273,9 @@ export class Fighter {
     const left = (input & BTN.LEFT) !== 0;
     const right = (input & BTN.RIGHT) !== 0;
     const dir = left && right ? 0 : left ? -1 : right ? 1 : 0;
+    const down = (input & BTN.DOWN) !== 0;
 
-    return { dir, dashRequest };
+    return { dir, dashRequest, down };
   }
 
   _takeBuffered(name) {
@@ -267,8 +306,10 @@ export class Fighter {
     this.moveId = id;
     this.moveFrame = -1;
     this.moveHitLanded = false;
+    this.moveAir = this.airborne;
     this.usedGroups = [];
-    this.vx = 0;
+    // 空中技は跳んだ勢いを残す（地上技はその場で止まる）
+    if (!this.moveAir) this.vx = 0;
     this.setAnim(move.anim, {
       fps: move.animFps ?? 0,
       stretch: move.animFps ? 0 : move.total,
@@ -279,11 +320,19 @@ export class Fighter {
   }
 
   _toIdle() {
-    this.state = STATE.IDLE;
     this.moveId = null;
     this.moveFrame = -1;
+    this.moveAir = false;
     this.usedGroups = [];
     this.comboCount = 0;
+    this.crouchTimer = 0;
+    // 空中で技や硬直が明けたときは、地面に立たせるのではなく落下に戻す
+    if (this.airborne) {
+      this.state = STATE.JUMP;
+      this.setAnim(this.def.anims.fall, { fps: 11, hold: true });
+      return;
+    }
+    this.state = STATE.IDLE;
     this.vx = 0;
   }
 
@@ -291,7 +340,22 @@ export class Fighter {
     this.state = STATE.JUMP;
     this.vy = this.def.jumpVy;
     this.vx = dir * this.def.jumpVx;
+    this.airJumps = this.def.airJumps ?? AIR_JUMPS;
     this.setAnim(this.def.anims.jump, { fps: 11, hold: true, restart: true });
+  }
+
+  /**
+   * 空中ジャンプ（2段ジャンプ）。
+   * 方向を入れていればその方向へ、入れていなければ横の勢いを殺して真上へ跳ぶ。
+   * 後者があるので「飛び込みを空中で止めて技を透かす」動きができる。
+   */
+  _airJump(dir, sim) {
+    this.airJumps -= 1;
+    this.vy = this.def.jumpVy * AIR_JUMP_VY_SCALE;
+    if (dir !== 0) this.vx = dir * this.def.jumpVx;
+    else this.vx *= 0.35;
+    this.setAnim(this.def.anims.jump, { fps: 11, hold: true, restart: true });
+    sim?.addEffect('pop', this.x, this.y + 20, { life: 16 });
   }
 
   // ── 1ティック進める ─────────────────────────────────────────
@@ -305,7 +369,7 @@ export class Fighter {
   step(input, opponent, sim, controllable) {
     // 入力の読み取りはヒットストップ中も行う。
     // ここを止めると、硬直明けに技を出すための先行入力が効かなくなる。
-    const { dir, dashRequest } = this._readInput(controllable ? input : 0);
+    const { dir, dashRequest, down } = this._readInput(controllable ? input : 0);
 
     if (this.comboDisplayTimer > 0) this.comboDisplayTimer -= 1;
 
@@ -322,14 +386,17 @@ export class Fighter {
       case STATE.WALK:
       case STATE.DASH:
       case STATE.GUARD:
-        this._stepFree(dir, dashRequest, opponent, sim);
+        this._stepFree(dir, dashRequest, down, opponent, sim);
+        break;
+      case STATE.CROUCH:
+        this._stepCrouch(down, opponent);
         break;
       case STATE.JUMP:
-        this._stepAir(sim);
+        this._stepAir(dir, opponent, sim);
         break;
       case STATE.LAND:
         this.vx *= 0.7;
-        if (this.stateTimer >= LAND_LAG) this._toIdle();
+        if (this.stateTimer >= this.landLag) this._toIdle();
         break;
       case STATE.MOVE:
         this._stepMove(opponent, sim);
@@ -337,10 +404,10 @@ export class Fighter {
       case STATE.HIT:
       case STATE.BLOCK:
       case STATE.GUARD_BREAK:
-        this._stepStun();
+        this._stepStun(sim);
         break;
       case STATE.DOWN:
-        this._stepDown();
+        this._stepDown(sim);
         break;
       case STATE.KO:
         this.vx *= 0.9;
@@ -352,7 +419,7 @@ export class Fighter {
     this._integrate(sim);
   }
 
-  _stepFree(dir, dashRequest, opponent, sim) {
+  _stepFree(dir, dashRequest, down, opponent, sim) {
     // 歩き・待機・ガード中は常に相手の方を向く。
     // ダッシュだけは進行方向を向くので、下の分岐で上書きする。
     if (this.state !== STATE.DASH) {
@@ -379,6 +446,15 @@ export class Fighter {
       this.state = STATE.GUARD;
       this.vx = 0;
       this.setAnim(this.def.anims.guard, { fps: 14, hold: true });
+      return;
+    }
+
+    // ガードの次。走っている途中でもしゃがめる（＝急にビームの下へ潜れる）
+    if (down) {
+      this.state = STATE.CROUCH;
+      this.stateTimer = 0;
+      this.vx = 0;
+      this._syncCrouchAnim();
       return;
     }
 
@@ -413,20 +489,115 @@ export class Fighter {
     }
   }
 
-  _stepAir(sim) {
+  /**
+   * しゃがみ。
+   *
+   * 下を押している間は深くなり、離すと同じ速さで立ち上がる。
+   * 立ち上がり切って初めて IDLE に戻るので、「しゃがんで避けて即反撃」には
+   * 沈む時間と起き上がる時間の両方がかかる。これがしゃがみのコスト。
+   *
+   * 技とジャンプは待たずに出せる（そのぶんやられ判定はすぐ立ち姿勢に戻る）。
+   * しゃがみ専用の技はまだ無いので、地上技がそのまま出る。
+   */
+  _stepCrouch(down, opponent) {
+    this.facing = opponent.x >= this.x ? 1 : -1;
+    this.vx = 0;
+
+    // 技・ジャンプ・ガードで立つ。立った時点で判定も立ち姿勢に戻す
+    if (this._takeBuffered('skill')) {
+      this.crouchTimer = 0;
+      this.startMove(this.def.skillMove, opponent);
+      return;
+    }
+    if (this._takeBuffered('attack')) {
+      this.crouchTimer = 0;
+      this.startMove(this.def.attackMove, opponent);
+      return;
+    }
+    if (this._takeBuffered('jump')) {
+      this.crouchTimer = 0;
+      this._jump(0);
+      return;
+    }
+    if (this.guardHeld) {
+      this.crouchTimer = 0;
+      this.state = STATE.GUARD;
+      this.stateTimer = 0;
+      this.setAnim(this.def.anims.guard, { fps: 14, hold: true });
+      return;
+    }
+
+    if (down) {
+      if (this.crouchTimer < CROUCH_TICKS) this.crouchTimer += 1;
+    } else {
+      this.crouchTimer -= 1;
+      if (this.crouchTimer <= 0) {
+        this.crouchTimer = 0;
+        this._toIdle();
+        return;
+      }
+    }
+    this._syncCrouchAnim();
+  }
+
+  /**
+   * しゃがみの絵を crouch シートの「立ち → しゃがみ」8コマに合わせる。
+   *
+   * anim.time を crouchTimer で上書きしているのがこの関数の肝。
+   * 通常のアニメは経過ティックで進むが、しゃがみは押し戻しで往復するので、
+   * 時間ではなく「いまの深さ」からコマを決める必要がある。
+   * こうしておくと、立ち上がりは何もしなくても逆再生になる。
+   */
+  _syncCrouchAnim() {
+    this.setAnim(this.def.anims.crouch, { stretch: CROUCH_TICKS + 1, hold: true });
+    this.anim.time = this.crouchTimer;
+  }
+
+  /**
+   * 空中。地上と同じ優先順位（技 > ジャンプ）で入力を拾う。
+   * 空中技を持たないキャラは技の分岐を素通りするだけで済む。
+   */
+  _stepAir(dir, opponent, sim) {
+    if (this.def.airSkillMove && this._takeBuffered('skill')) {
+      this.startMove(this.def.airSkillMove, opponent);
+      return;
+    }
+    if (this.def.airAttackMove && this._takeBuffered('attack')) {
+      this.startMove(this.def.airAttackMove, opponent);
+      return;
+    }
+    if (this.airJumps > 0 && this._takeBuffered('jump')) {
+      this._airJump(dir, sim);
+      return;
+    }
+
     // 上昇中と落下中でアニメを切り替える
     if (this.vy > 0) this.setAnim(this.def.anims.jump, { fps: 11, hold: true });
     else this.setAnim(this.def.anims.fall, { fps: 11, hold: true });
   }
 
   _stepMove(opponent, sim) {
-    const move = this.currentMove();
+    let move = this.currentMove();
     this.moveFrame += 1;
-    if (this.moveFrame >= move.total) {
-      // 繋ぎ先があれば入力を待たずに続ける（溜め → 突進 のような 2 段構えの技）
-      if (move.onEnd) this.startMove(move.onEnd, opponent);
-      else this._toIdle();
-      return;
+
+    // 繋ぎ先があれば入力を待たずに続ける（溜め → 突進 のような 2 段構えの技）。
+    // 繋いだ先の 0 フレーム目は、繋いだのと同じティックで処理する。
+    // ここで 1 ティック空けると、その間だけ技の移動指定が効かず、
+    // 重力だけが掛かってしまう（浮遊照射が繋ぎ目でカクッと落ちる）。
+    // ループ回数の上限は onEnd を辿れる深さの保険（万一循環していても止まる）。
+    for (let guard = 0; this.moveFrame >= move.total; guard += 1) {
+      if (!move.onEnd || guard >= 4) {
+        this._toIdle();
+        return;
+      }
+      this.startMove(move.onEnd, opponent);
+      move = this.currentMove();
+      this.moveFrame = 0;
+    }
+
+    // 出し始めに自分の弾を引き上げる技（照射の溜めなど）
+    if (this.moveFrame === 0 && move.clearsOwnProjectiles) {
+      sim.clearProjectilesOf(this.index);
     }
 
     // 自身の移動成分（前方向が正）
@@ -434,7 +605,9 @@ export class Fighter {
       if (this.moveFrame < m.start || this.moveFrame > m.end) continue;
       if (m.stopOnHit && this.moveHitLanded) continue;
       this.vx = this.facing * (m.vx ?? 0);
-      if (m.vy) this.vy = m.vy;
+      // vy: 0 は「重力を打ち消してその場に留まる」という指定なので、
+      // 0 かどうかではなく「書かれているか」で見る
+      if (m.vy != null) this.vy = m.vy;
     }
 
     // 弾・持続判定などの発生
@@ -461,7 +634,7 @@ export class Fighter {
    * 倒れる／起き上がるモーションは death シートを流用している
    * （専用シートが無いため。起き上がりはそれを逆再生する）。
    */
-  _stepDown() {
+  _stepDown(sim) {
     if (this.downPhase === DOWN_PHASE.AIR) {
       // 落ちている間はのけぞりのまま
       this.setAnim(this.def.anims.hurt, { fps: 14, hold: true });
@@ -482,15 +655,22 @@ export class Fighter {
     if (this.stateTimer >= DOWN_GETUP_TICKS) this._toIdle();
   }
 
-  _stepStun() {
+  _stepStun(sim) {
     this.vx *= 0.9;
-    if (this.stateTimer >= this.stunTicks) {
-      if (this.state === STATE.BLOCK && this.guardHeld) {
-        this.state = STATE.GUARD;
-        this.stateTimer = 0;
-      } else {
-        this._toIdle();
-      }
+    if (this.stateTimer < this.stunTicks) return;
+
+    // のけぞりが解けた ＝ コンボが途切れた。致命傷を負っていたならここで倒れる。
+    // 連続ヒット中は毎回のけぞりが上書きされるので、その間は立ったまま食らい続ける。
+    if (this.doomed) {
+      this._collapse(sim);
+      return;
+    }
+
+    if (this.state === STATE.BLOCK && this.guardHeld) {
+      this.state = STATE.GUARD;
+      this.stateTimer = 0;
+    } else {
+      this._toIdle();
     }
   }
 
@@ -503,22 +683,35 @@ export class Fighter {
     }
 
     if (this.y <= 0) {
-      const wasAir = this.state === STATE.JUMP;
+      // 空中技は着地で打ち切られる。硬直は技ごとに指定できる
+      // （急降下技のように、外したら大きな隙になるものを作れるように）
+      const airMoveLanded = this.state === STATE.MOVE && this.moveAir;
+      const wasAir = this.state === STATE.JUMP || airMoveLanded;
       const crashed = this.state === STATE.DOWN && this.downPhase === DOWN_PHASE.AIR;
       this.y = 0;
       this.vy = 0;
       if (wasAir) {
+        this.landLag = airMoveLanded ? this.currentMove().landLag ?? LAND_LAG : LAND_LAG;
         this.state = STATE.LAND;
         this.stateTimer = 0;
+        this.moveId = null;
+        this.moveFrame = -1;
+        this.moveAir = false;
+        this.usedGroups = [];
         this.vx *= 0.4;
         this.setAnim(this.def.anims.land, { fps: 20, hold: true, restart: true });
       } else if (crashed) {
-        // 叩きつけられて倒れる。ここからが「ダウンしている時間」。
-        this.downPhase = DOWN_PHASE.LIE;
-        this.stateTimer = 0;
         this.vx *= 0.35;
-        this.setAnim(this.def.anims.death, { fps: 20, hold: true, restart: true });
-        if (sim) sim.shake = Math.max(sim.shake, 10);
+        if (this.doomed) {
+          // 打ち上げられて叩きつけられたら、そこで決着
+          this._collapse(sim);
+        } else {
+          // 叩きつけられて倒れる。ここからが「ダウンしている時間」。
+          this.downPhase = DOWN_PHASE.LIE;
+          this.stateTimer = 0;
+          this.setAnim(this.def.anims.death, { fps: 20, hold: true, restart: true });
+          if (sim) sim.shake = Math.max(sim.shake, 10);
+        }
       }
     }
 
@@ -536,7 +729,21 @@ export class Fighter {
   // ── 被弾 ────────────────────────────────────────────────────
 
   /**
-   * 攻撃を受ける。ガード判定・ダメージ計算・のけぞりまでここで完結させる。
+   * 攻撃を受ける。ガード判定・のけぞりまでここで完結させる。
+   *
+   * ── 一発必殺のルール ───────────────────────────────────────
+   * ガードできなかった打撃は、どんな技のどの段でも致命傷になる。
+   * 多段技の 1 打目でも最終打でも、かすった時点で勝負は決まる。
+   *
+   * ただしその場で倒すと、連続ヒット技が 1 打目で消えてしまって
+   * 何が起きたのか分からない。そこで
+   *
+   *   1. 体力を 0 にして `doomed` を立てる（この時点で勝敗は確定）
+   *   2. のけぞりは普通に取る ＝ 残りの段もそのまま当たり、ヒット数が伸びる
+   *   3. のけぞりが解けた瞬間（コンボが途切れた瞬間）に崩れ落ちる
+   *
+   * という順にして、決まり手の演出だけを最後まで見せている。
+   *
    * @param {object} hit 判定データ
    * @param {number} sourceX 攻撃の発生源X（前後判定に使う）
    * @param {number} sourceFacing 押し出し方向
@@ -548,6 +755,8 @@ export class Fighter {
     const wasBlocking = this.canBlockFrom(sourceX);
     const blocked = wasBlocking && !hit.guardBreak;
 
+    // のけぞりもガードも立ち姿勢の絵なので、やられ判定も立ちに戻す
+    this.crouchTimer = 0;
     this.hitstop = hit.hitstop;
     if (attacker) attacker.hitstop = hit.hitstop;
 
@@ -565,10 +774,9 @@ export class Fighter {
       return 'block';
     }
 
-    // コンボ補正: 段数が増えるほどダメージを落とす
-    const attackerCombo = attacker ? attacker.comboCount : 0;
-    const scale = Math.max(COMBO_SCALE_MIN, 1 - COMBO_SCALE_STEP * attackerCombo);
-    this.health -= Math.round(hit.damage * scale);
+    // 当たった時点で致命傷。ダメージ量は見ない（技の damage は残してあるが未使用）。
+    this.health = 0;
+    this.doomed = true;
 
     const breaking = wasBlocking && hit.guardBreak;
     // ダウン技はのけぞりではなく、打ち上げてダウンさせる（hitstun は使わない）
@@ -598,20 +806,36 @@ export class Fighter {
       attacker.comboDisplayTimer = 90;
     }
 
+    // ヒットの手応えは火花で出す。血しぶきは決着（_collapse）のときだけ。
     sim.addEffect(breaking ? 'break' : 'spark', this.x + pushDir * -34, this.y + 118);
     sim.shake = Math.max(sim.shake, breaking ? 14 : 7);
 
-    if (this.health <= 0) this._die(sim);
+    // ここでは倒さない。倒れるのは _stepStun / _integrate がコンボの途切れを
+    // 見てから（_collapse）。
     return breaking ? 'break' : 'hit';
   }
 
-  _die(sim) {
+  /** 致命傷を負ったキャラが、コンボが途切れて崩れ落ちる。 */
+  _collapse(sim) {
     this.health = 0;
+    this.doomed = false;
     this.state = STATE.KO;
     this.stateTimer = 0;
     this.moveId = null;
+    this.moveFrame = -1;
+    this.moveAir = false;
+    this.usedGroups = [];
+    this.vx *= 0.4;
     this.setAnim(this.def.anims.death, { fps: 10, hold: true, restart: true });
-    sim.shake = Math.max(sim.shake, 18);
+    if (sim) {
+      // 決着の瞬間だけ血が噴き出す。倒れた向き（背中側）へ飛ばす。
+      // 血溜まりは足元に敷くので、キャラの下に潜らせるため別のエフェクトにしてある。
+      // 血溜まりと同じ寿命にしておく。飛沫だけ先に消えると、
+      // 溜まりだけが残って不自然に見えるため
+      sim.addEffect('blood', this.x, this.y + 106, { life: 150, facing: -this.facing });
+      sim.addEffect('bloodPool', this.x, 0, { life: 150, facing: -this.facing });
+      sim.shake = Math.max(sim.shake, 18);
+    }
   }
 
   // ── セーブ / ロード（ロールバック用） ───────────────────────
@@ -624,7 +848,9 @@ export class Fighter {
     return [
       this.x, this.y, this.vx, this.vy, this.facing, this.health,
       this.state, this.stateTimer, this.moveId, this.moveFrame,
-      this.moveHitLanded, this.usedGroups.slice(), this.hitstop, this.downPhase,
+      this.moveHitLanded, this.moveAir, this.usedGroups.slice(),
+      this.hitstop, this.landLag, this.downPhase, this.airJumps, this.doomed,
+      this.crouchTimer,
       this.guardHeld, this.walkDir, this.dashDir, this.prevInput,
       this.tapDir, this.tapTimer, this.bufAttack, this.bufSkill, this.bufJump,
       this.comboCount, this.comboDisplay, this.comboDisplayTimer,
@@ -640,8 +866,9 @@ export class Fighter {
     this.x = s[i++]; this.y = s[i++]; this.vx = s[i++]; this.vy = s[i++];
     this.facing = s[i++]; this.health = s[i++];
     this.state = s[i++]; this.stateTimer = s[i++]; this.moveId = s[i++]; this.moveFrame = s[i++];
-    this.moveHitLanded = s[i++]; this.usedGroups = s[i++].slice(); this.hitstop = s[i++];
-    this.downPhase = s[i++];
+    this.moveHitLanded = s[i++]; this.moveAir = s[i++]; this.usedGroups = s[i++].slice();
+    this.hitstop = s[i++]; this.landLag = s[i++]; this.downPhase = s[i++];
+    this.airJumps = s[i++]; this.doomed = s[i++]; this.crouchTimer = s[i++];
     this.guardHeld = s[i++]; this.walkDir = s[i++]; this.dashDir = s[i++]; this.prevInput = s[i++];
     this.tapDir = s[i++]; this.tapTimer = s[i++];
     this.bufAttack = s[i++]; this.bufSkill = s[i++]; this.bufJump = s[i++];

@@ -6,6 +6,7 @@
  * CPU 戦もリプレイ・ロールバックがそのまま成立する。
  */
 import { BTN, STATE } from './constants.js';
+import { CROUCH_CLEAR_Y } from './fighter.js';
 
 /** 難易度プリセット。反応の速さと手の出し方の荒さを変える。 */
 export const DIFFICULTY = {
@@ -26,13 +27,48 @@ export class CpuController {
     this.cooldown = 0;
   }
 
+  /**
+   * これから出てくる攻撃判定を全部集める。
+   *
+   * 溜め技（ビームの溜め・タックルの溜め）は、その段階では判定を 1 つも
+   * 持っていない。onEnd の先まで辿らないと「何が来るのか」が分からないので、
+   * ここで繋ぎ先も一緒に見ている。溜めを見てから避ける／しゃがむ、が
+   * 成立するのはこれのおかげ。
+   */
+  _upcomingHits(opponent) {
+    const hits = [];
+    let move = opponent.currentMove();
+    for (let guard = 0; move && guard < 4; guard += 1) {
+      hits.push(...move.hits);
+      move = move.onEnd ? opponent.def.moves[move.onEnd] : null;
+    }
+    return hits;
+  }
+
   /** 相手が攻撃モーション中で、まだ判定が出ていない（＝これから来る）か。 */
   _incomingAttack(opponent) {
     if (opponent.state !== STATE.MOVE) return false;
     const move = opponent.currentMove();
-    if (!move || move.hits.length === 0) return false;
+    if (!move) return false;
+    // 溜めの段階。判定はまだ無いが、確実にこれから来る
+    if (move.onEnd) return true;
+    if (move.hits.length === 0) return false;
     const last = move.hits[move.hits.length - 1];
     return opponent.moveFrame <= last.end;
+  }
+
+  /**
+   * しゃがめば下をくぐれる攻撃か。
+   * 判定がひとつでも低いところに出るなら、しゃがんでも当たるので false。
+   * 魔法使いのビーム（地上から 107〜205 を薙ぐ）がこれに当たる。
+   */
+  _isDuckable(opponent) {
+    if (opponent.state !== STATE.MOVE) return false;
+    const hits = this._upcomingHits(opponent);
+    if (hits.length === 0) return false;
+    // 空中から撃たれていれば判定はさらに高いので、そのぶん下駄を履かせる
+    const lift = opponent.y;
+    return hits.every((h) => h.box.y + lift >= CROUCH_CLEAR_Y);
   }
 
   /**
@@ -63,15 +99,40 @@ export class CpuController {
     const idealRange = ranged ? 430 : 150;
     const strikeRange = ranged ? 620 : 175;
 
+    // 0. 空中に居るときは空中技と2段ジャンプしか選べないので、先に分けて考える。
+    //    降り際（vy < 0）に振ると地上の相手に当たりやすい。
+    if (me.airborne && me.state === STATE.JUMP) {
+      let air = 0;
+      if (dist < 220 && me.vy < 0 && !foe.invulnerable && rng.chance(this.cfg.aggression)) {
+        air = rng.chance(this.cfg.skillChance * 2) ? BTN.SKILL : BTN.ATTACK;
+      } else if (me.airJumps > 0 && this._incomingAttack(foe) && rng.chance(this.cfg.guardChance)) {
+        // 一発が致命傷なので、跳び直して軌道をずらす
+        air = BTN.UP;
+      } else if (dist > 200) {
+        air = toFoe;
+      }
+      this.plan = { bits: air, ticks: 5 };
+      return air;
+    }
+
     let bits = 0;
     let ticks = this.cfg.react;
 
-    // 1. 相手の攻撃が来ているならガードを優先
+    // 1. ビームのように高いところだけを薙ぐ攻撃は、しゃがんでくぐる。
+    //    ガードより先に見るのは、ビームがガード不能だから。
+    //    ビームは画面端まで届くので、間合いは見ずに構える。
+    if (this._incomingAttack(foe) && this._isDuckable(foe) && rng.chance(this.cfg.guardChance)) {
+      // 溜めが 1 秒あるので、構えたら撃ち終わるまで下を押しっぱなしにする
+      this.plan = { bits: BTN.DOWN, ticks: 50 };
+      return BTN.DOWN;
+    }
+
+    // 2. 相手の攻撃が来ているならガードを優先
     if (this._incomingAttack(foe) && dist < 260 && rng.chance(this.cfg.guardChance)) {
       bits = BTN.GUARD;
       ticks = 14;
     }
-    // 2. 間合いに入っていれば攻撃（ダウン中の相手には当たらないので振らない）
+    // 3. 間合いに入っていれば攻撃（ダウン中の相手には当たらないので振らない）
     else if (
       dist < strikeRange &&
       !foe.invulnerable &&
@@ -87,12 +148,12 @@ export class CpuController {
       }
       ticks = 6;
     }
-    // 3. 近すぎるので下がる（歩き後退は相手を向いたままになる）
+    // 4. 近すぎるので下がる（歩き後退は相手を向いたままになる）
     else if (dist < idealRange * 0.55) {
       bits = away;
       ticks = 16;
     }
-    // 4. 遠いので詰める。たまにダッシュや飛び込みを混ぜる
+    // 5. 遠いので詰める。たまにダッシュや飛び込みを混ぜる
     else if (dist > idealRange) {
       bits = toFoe;
       if (rng.chance(this.cfg.dashChance)) {
@@ -100,10 +161,11 @@ export class CpuController {
         this.plan = { bits: toFoe, ticks: 2 };
         return 0;
       }
-      if (dist > 320 && rng.chance(0.08)) bits |= BTN.UP;
+      // 飛び込みは有効な間合いの詰め方なので、遠いときは混ぜる
+      if (dist > 300 && rng.chance(0.16)) bits |= BTN.UP;
       ticks = 12;
     }
-    // 5. 手持ち無沙汰。少し揺さぶる
+    // 6. 手持ち無沙汰。少し揺さぶる
     else {
       bits = rng.chance(0.5) ? toFoe : away;
       ticks = 10;

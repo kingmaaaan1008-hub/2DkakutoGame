@@ -3,8 +3,14 @@
  *
  *   攻撃: 1段目「横切り」(attack2シート)、続けて攻撃ボタンで「盾切り」(attackシート)
  *   スキル: 「タックル」(tackleシート) 突進してガードを崩す。外すと隙が大きい。
+ *   空中攻撃: 「飛び斬り」(attackシートの振り下ろし)
+ *   空中スキル: 「急降下斬り」(tackleシート) 斜め下へ落ちる。外すと着地硬直が長い。
  */
 import { defineMoves } from '../moves.js';
+import { jumpVyForHeight } from '../constants.js';
+
+/** 見た目の身長（ワールド単位）。ジャンプ高もここから決める。 */
+const HEIGHT = 215;
 
 export default {
   id: 'swordsman',
@@ -15,7 +21,8 @@ export default {
   health: 1000,
   walkSpeed: 3.1,
   dashSpeed: 6.9,
-  jumpVy: 13.6,
+  /** 自分の身長ぶん跳べる初速。2段目は AIR_JUMP_VY_SCALE 倍。 */
+  jumpVy: jumpVyForHeight(HEIGHT),
   jumpVx: 4.4,
   /** 大きいほど吹き飛びにくい。 */
   weight: 1.0,
@@ -29,6 +36,7 @@ export default {
     fall: 'fall',
     land: 'land',
     guard: 'guard',
+    crouch: 'crouch',
     hurt: 'hurt',
     death: 'death',
   },
@@ -45,6 +53,9 @@ export default {
   /** 攻撃ボタン・スキルボタンで出る技。 */
   attackMove: 'slash1',
   skillMove: 'tackleCharge',
+  /** 同じボタンを空中で押したときに出る技。 */
+  airAttackMove: 'airSlash',
+  airSkillMove: 'diveSlash',
 
   moves: defineMoves({
     // 1段目。振りかぶってから斬る。ここから盾切りへ繋ぐ。
@@ -151,6 +162,56 @@ export default {
       ],
       // 当てたらそこで止まる。空振りすると走り抜けて大きな隙になる。
       motion: [{ start: 1, end: 19, vx: 9.6, stopOnHit: true }],
+    },
+
+    // 空中攻撃: 落ちながら斬り下ろす。判定は足元より少し下まで伸ばしてあり、
+    // 降り際に置くように出すと引っかかる。
+    airSlash: {
+      label: '飛び斬り',
+      anim: 'attack',
+      animRange: [4, 7],
+      total: 30,
+      animFps: 13,
+      hits: [
+        {
+          start: 7,
+          end: 18,
+          box: { x: 14, y: -20, w: 156, h: 180 },
+          damage: 90,
+          hitstun: 24,
+          blockstun: 14,
+          hitstop: 8,
+          pushHit: 6,
+          pushBlock: 4,
+        },
+      ],
+      spawns: [{ frame: 7, type: 'slash', duration: 10, origin: { x: 14, y: 70 }, length: 156, halfHeight: 74 }],
+    },
+
+    // 空中スキル: 斜め下へ一直線に落ちる。ガードごと崩してダウンを奪うが、
+    // 外すと着地でしばらく動けない（ジャンプからの一点読み）。
+    diveSlash: {
+      label: '急降下斬り',
+      anim: 'tackle',
+      animRange: [2, 7],
+      total: 46,
+      animFps: 15,
+      landLag: 26,
+      hits: [
+        {
+          start: 5,
+          end: 44,
+          box: { x: -10, y: -10, w: 140, h: 160 },
+          damage: 140,
+          hitstun: 34,
+          hitstop: 11,
+          pushHit: 11,
+          guardBreak: true,
+          knockdown: true,
+        },
+      ],
+      // vy を毎フレーム上書きするので、重力に関係なく一定の速さで落ちる
+      motion: [{ start: 3, end: 44, vx: 7.2, vy: -15 }],
     },
   }),
 };

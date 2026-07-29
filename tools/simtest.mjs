@@ -8,8 +8,9 @@
  *   npm test
  */
 import { Simulation } from '../src/game/sim.js';
-import { BTN, STATE, ROUND_INTRO_TICKS } from '../src/game/constants.js';
+import { BTN, STATE, ROUND_INTRO_TICKS, CROUCH_TICKS } from '../src/game/constants.js';
 import { getProjectileDef } from '../src/game/projectiles.js';
+import { getCharacter } from '../src/game/characters/index.js';
 
 let passed = 0;
 let failed = 0;
@@ -90,8 +91,25 @@ section('移動');
   const p1 = sim.fighters[0];
   run(sim, 4, BTN.UP);
   check('ジャンプで浮く', p1.y > 0, `y=${p1.y.toFixed(1)}`);
-  run(sim, 60, 0);
+  run(sim, 90, 0);
   check('着地して地面に戻る', p1.y === 0);
+}
+
+{
+  // 1段目のジャンプで自分の身長ぶん跳べる
+  // （身長はアトラスの targetHeight ＝ 剣士215 / 狂戦士225 / 魔法使い212）
+  for (const [id, height] of [['swordsman', 215], ['berserker', 225], ['mage', 212]]) {
+    const sim = newSim([id, 'swordsman']);
+    const p1 = sim.fighters[0];
+    let peak = 0;
+    run(sim, 1, BTN.UP);
+    for (let i = 0; i < 120 && (p1.y > 0 || i < 3); i += 1) {
+      run(sim, 1, 0);
+      peak = Math.max(peak, p1.y);
+    }
+    check(`${id}: 身長(${height})ぶん跳べる`, peak >= height && peak < height * 1.12,
+      `peak=${peak.toFixed(1)}`);
+  }
 }
 
 // ── 攻撃と連携 ──────────────────────────────────────────────
@@ -100,16 +118,14 @@ section('剣士の攻撃と連携');
   const sim = newSim();
   place(sim, 800, 940);
   const [p1, p2] = sim.fighters;
-  const hp0 = p2.health;
 
   run(sim, 1, BTN.ATTACK);
   check('攻撃で1段目「横切り」が出る', p1.moveId === 'slash1', `move=${p1.moveId}`);
 
   // 判定が出るのは剣を伸ばしきったあたり。当たるまで進める
-  for (let i = 0; i < 40 && p2.health === hp0; i += 1) run(sim, 1, 0);
-  check('1段目が当たる', p2.health < hp0, `hp ${hp0} -> ${p2.health}`);
+  for (let i = 0; i < 40 && p1.comboDisplay < 1; i += 1) run(sim, 1, 0);
+  check('1段目が当たる', p1.comboDisplay === 1, `hits=${p1.comboDisplay}`);
 
-  const hp1 = p2.health;
   // 連携の受付は 1段目を振り切ったあと。当ててすぐ押しても繋がらない。
   run(sim, 1, BTN.ATTACK);
   run(sim, 4, 0);
@@ -124,11 +140,11 @@ section('剣士の攻撃と連携');
 
   // 2段目が当たるまで、相手が硬直から抜けていないか（＝連続技として繋がるか）を見る
   let recovered = false;
-  for (let i = 0; i < 30 && p2.health === hp1; i += 1) {
+  for (let i = 0; i < 30 && p1.comboDisplay < 2; i += 1) {
     run(sim, 1, 0);
     if (p2.isFree) recovered = true;
   }
-  check('2段目も当たる', p2.health < hp1, `hp ${hp1} -> ${p2.health}`);
+  check('2段目も当たる', p1.comboDisplay === 2, `hits=${p1.comboDisplay}`);
   check('1段目からの連続技として繋がる', !recovered);
 }
 
@@ -228,19 +244,41 @@ section('ダウン');
 }
 
 {
-  // 魔法使いのビームは最終打だけダウン
+  // 魔法使いのビームは 1 秒溜めてから撃ち、最終打だけダウン
   const sim = newSim(['mage', 'swordsman']);
   place(sim, 700, 1000);
-  const p2 = sim.fighters[1];
+  const [p1, p2] = sim.fighters;
 
   run(sim, 1, BTN.SKILL);
-  run(sim, 50, 0); // 途中の打が当たっているころ
-  check('ビーム途中の打ではダウンしない', p2.state !== STATE.DOWN, `state=${p2.state}`);
-  const mid = p2.health;
-  check('途中の打はダメージが入っている', mid < p2.maxHealth, `hp=${mid}`);
+  check('スキルでビームの溜めに入る', p1.moveId === 'beamCharge', `move=${p1.moveId}`);
+  run(sim, 40, 0);
+  check('溜めている間は何も起きない', p2.health === p2.maxHealth && p1.moveId === 'beamCharge',
+    `hp=${p2.health} move=${p1.moveId}`);
 
-  run(sim, 20, 0); // 最終打まで
+  // 溜めきると入力無しで照射へ移る
+  run(sim, 25, 0);
+  check('1秒溜めきると照射に移る', p1.moveId === 'beam', `move=${p1.moveId}`);
+
+  for (let i = 0; i < 30 && p2.health === p2.maxHealth; i += 1) run(sim, 1, 0);
+  check('照射が当たる', p2.health === 0, `hp=${p2.health}`);
+  check('ビーム途中の打ではダウンしない', p2.state !== STATE.DOWN, `state=${p2.state}`);
+
+  for (let i = 0; i < 60 && p2.state !== STATE.DOWN; i += 1) run(sim, 1, 0);
   check('ビーム最終打でダウンする', p2.state === STATE.DOWN, `state=${p2.state}`);
+}
+
+{
+  // 溜め中は足元に魔法陣が出る（＝撃つ合図が相手に見える）
+  const sim = newSim(['mage', 'swordsman']);
+  place(sim, 700, 1000);
+  const p1 = sim.fighters[0];
+  run(sim, 2, BTN.SKILL);
+  const circle = sim.effects.find((e) => e.type === 'magicCircle');
+  check('溜めと同時に魔法陣が出る', !!circle);
+  check('魔法陣は術者の足元に追従する', circle.follow === p1.index, `follow=${circle?.follow}`);
+  run(sim, 55, 0);
+  check('照射を始めるまで魔法陣が残っている',
+    sim.effects.some((e) => e.type === 'magicCircle'), `n=${sim.effects.length}`);
 }
 
 {
@@ -305,6 +343,61 @@ section('魔法使い');
   }
   check('連打で複数発撃てる', fired >= 3, `${fired} 発`);
   check('同時に出る弾は上限まで', maxAlive === cap, `最大 ${maxAlive} 発 / 上限 ${cap}`);
+  check('場に出せる弾は1発だけ', cap === 1, `上限 ${cap} 発`);
+}
+
+{
+  // ビームを構えると、場に出ている自分の弾は消える。
+  // 弾で足止めしてから照射、という重ねがけを封じるための弱体化。
+  const sim = newSim(['mage', 'swordsman']);
+  place(sim, 600, 1400);
+  const p1 = sim.fighters[0];
+
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 14, 0);
+  check('先に弾を撒いておく', sim.projectiles.length === 1, `n=${sim.projectiles.length}`);
+
+  run(sim, 16, 0); // 弾を撃つモーションを終えてから構える
+  run(sim, 1, BTN.SKILL);
+  run(sim, 3, 0);
+  check('ビームを構えると自分の弾が消える', sim.projectiles.length === 0,
+    `n=${sim.projectiles.length} move=${p1.moveId}`);
+  check('消えるときに演出が出る', sim.effects.some((e) => e.type === 'pop'));
+
+  // 溜めている間も撃ち足せない（技中なので当然だが、念のため）
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 20, 0);
+  check('溜め中に弾を撒き直せない', sim.projectiles.length === 0, `n=${sim.projectiles.length}`);
+}
+
+{
+  // 相手の弾は消さない
+  const sim = newSim(['mage', 'mage']);
+  place(sim, 600, 1400);
+
+  run(sim, 1, 0, BTN.ATTACK);   // 2P だけが弾を撃つ
+  run(sim, 14, 0, 0);
+  check('2P の弾が場に出ている', sim.projectiles.length === 1, `n=${sim.projectiles.length}`);
+
+  run(sim, 1, BTN.SKILL, 0);    // 1P がビームを構える
+  run(sim, 3, 0, 0);
+  check('消えるのは自分の弾だけ', sim.projectiles.length === 1 && sim.projectiles[0].owner === 1,
+    `n=${sim.projectiles.length}`);
+}
+
+{
+  // 空中の浮遊照射も同じ。地上で撒いてから跳んで構えても消える
+  const sim = newSim(['mage', 'swordsman']);
+  place(sim, 600, 1400);
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 30, 0);
+  check('地上で弾を撒いておく', sim.projectiles.length === 1, `n=${sim.projectiles.length}`);
+
+  run(sim, 1, BTN.UP);
+  run(sim, 4, 0);
+  run(sim, 1, BTN.SKILL);
+  run(sim, 3, 0);
+  check('浮遊照射を構えても弾は消える', sim.projectiles.length === 0, `n=${sim.projectiles.length}`);
 }
 
 {
@@ -315,10 +408,336 @@ section('魔法使い');
   const hp0 = p2.health;
 
   run(sim, 1, BTN.SKILL);
-  check('スキルでビームが出る', p1.moveId === 'beam');
+  check('スキルでビームが出る', p1.moveId === 'beamCharge', `move=${p1.moveId}`);
+  let beamSeen = false;
+  for (let i = 0; i < 120 && p2.health === hp0; i += 1) {
+    run(sim, 1, 0, BTN.GUARD);
+    if (sim.effects.some((e) => e.type === 'beam')) beamSeen = true;
+  }
+  check('ビームのエフェクトが出る', beamSeen);
+  check('ビームはガードごと削る', p2.health === 0, `hp ${hp0} -> ${p2.health}`);
+}
+
+// ── 一発必殺 ────────────────────────────────────────────────
+section('一発必殺');
+{
+  // 一番軽い技（狂戦士の乱舞 1 段目）でも即死する
+  const sim = newSim(['berserker', 'swordsman']);
+  place(sim, 800, 920);
+  const [p1, p2] = sim.fighters;
+
+  run(sim, 1, BTN.ATTACK);
+  for (let i = 0; i < 30 && p1.comboDisplay < 1; i += 1) run(sim, 1, 0);
+  check('多段技の1打目でも体力が全部消える', p2.health === 0, `hp=${p2.health}`);
+  check('当たった瞬間はまだ倒れず、食らい状態のまま', !p2.isKO && p2.doomed,
+    `state=${p2.state} doomed=${p2.doomed}`);
+
+  // 残りの段も当たり続けて、ヒット数が伸びる
+  for (let i = 0; i < 120 && !p2.isKO; i += 1) run(sim, 1, 0);
+  check('コンボが途切れるまで被弾演出が続く', p1.comboDisplay >= 3, `hits=${p1.comboDisplay}`);
+  check('コンボが途切れたら倒れる', p2.isKO, `state=${p2.state}`);
+}
+
+{
+  // ガードは通す。当たらなければ死なない、が原則
+  const sim = newSim();
+  place(sim, 800, 930);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.ATTACK, BTN.GUARD);
   run(sim, 60, 0, BTN.GUARD);
-  check('ビームはガードごと削る', hp0 - p2.health > 80, `hp ${hp0} -> ${p2.health}`);
-  check('ビームのエフェクトが出る', sim.effects.some((e) => e.type === 'beam') || sim.tick > 0);
+  check('ガードできれば即死しない', p2.health === p2.maxHealth && !p2.doomed,
+    `hp=${p2.health} doomed=${p2.doomed}`);
+}
+
+{
+  // ダウンを奪う技は、叩きつけたところで決着する
+  const sim = newSim();
+  place(sim, 800, 930);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.SKILL);
+  run(sim, p2.def.moves ? 60 : 60, 0);
+  check('ガード崩しスキルも即死', p2.health === 0, `hp=${p2.health}`);
+  for (let i = 0; i < 120 && !p2.isKO; i += 1) run(sim, 1, 0);
+  check('打ち上げられて落ちたら倒れる', p2.isKO, `state=${p2.state}`);
+  check('起き上がっては来ない', p2.state === STATE.KO, `state=${p2.state}`);
+}
+
+// ── 2段ジャンプ ─────────────────────────────────────────────
+section('2段ジャンプ');
+{
+  const sim = newSim();
+  const p1 = sim.fighters[0];
+
+  run(sim, 1, BTN.UP);
+  run(sim, 24, 0); // 落ち始めるまで待つ
+  const yBefore = p1.y;
+  const vyBefore = p1.vy;
+  check('1段目で浮いて落下に入る', yBefore > 0 && vyBefore < 0,
+    `y=${yBefore.toFixed(1)} vy=${vyBefore.toFixed(2)}`);
+
+  run(sim, 1, BTN.UP);
+  check('空中でもう一度跳べる', p1.vy > 0, `vy=${p1.vy.toFixed(2)}`);
+  const peak = p1.y;
+
+  // 3回目は跳べない
+  run(sim, 30, 0);
+  const yFalling = p1.y;
+  run(sim, 1, BTN.UP);
+  check('3回目は跳べない', p1.vy < 0, `vy=${p1.vy.toFixed(2)}`);
+  check('2段目で高度を稼げている', peak > 0 && yFalling >= 0);
+
+  // 着地すれば回数は戻る
+  for (let i = 0; i < 120 && p1.y > 0; i += 1) run(sim, 1, 0);
+  run(sim, 12, 0);
+  run(sim, 1, BTN.UP);
+  run(sim, 20, 0);
+  run(sim, 1, BTN.UP);
+  check('着地すると2段ジャンプの回数が戻る', p1.airJumps === 0 && p1.y > 0,
+    `airJumps=${p1.airJumps} y=${p1.y.toFixed(1)}`);
+}
+
+// ── しゃがみ ────────────────────────────────────────────────
+section('しゃがみ');
+{
+  const sim = newSim();
+  const p1 = sim.fighters[0];
+  const standH = p1.hurtBox().h;
+
+  run(sim, 1, BTN.DOWN);
+  check('下入力でしゃがみ状態になる', p1.state === STATE.CROUCH, `state=${p1.state}`);
+  check('押した直後はまだ縮み切っていない', p1.hurtBox().h > standH * 0.9,
+    `h=${p1.hurtBox().h.toFixed(0)} / ${standH}`);
+
+  run(sim, CROUCH_TICKS, BTN.DOWN);
+  check('しゃがみ切るとやられ判定が縮む', p1.hurtBox().h < standH * 0.6,
+    `h=${p1.hurtBox().h.toFixed(0)} / ${standH}`);
+  check('絵も最後のコマまで進んでいる', p1.anim.name === 'crouch' && p1.crouchDepth === 1,
+    `anim=${p1.anim.name} depth=${p1.crouchDepth}`);
+  check('しゃがみ中は動けない', p1.vx === 0);
+
+  // 離すと同じ時間をかけて立ち上がる
+  run(sim, 2, 0);
+  check('離した直後はまだ立ち上がり途中', p1.state === STATE.CROUCH && p1.crouchDepth < 1,
+    `depth=${p1.crouchDepth}`);
+  run(sim, CROUCH_TICKS, 0);
+  check('立ち上がると通常状態に戻る', p1.state === STATE.IDLE, `state=${p1.state}`);
+  check('やられ判定も元に戻る', p1.hurtBox().h === standH, `h=${p1.hurtBox().h}`);
+}
+
+{
+  // しゃがみからは技もジャンプも出せる（そのぶん判定は立ちに戻る）
+  const sim = newSim();
+  const p1 = sim.fighters[0];
+  run(sim, CROUCH_TICKS + 2, BTN.DOWN);
+  run(sim, 1, BTN.DOWN | BTN.ATTACK);
+  run(sim, 2, BTN.DOWN);
+  check('しゃがみから攻撃が出る', p1.moveId === 'slash1', `move=${p1.moveId}`);
+  check('技を出したら判定は立ち姿勢に戻る', p1.crouchDepth === 0, `depth=${p1.crouchDepth}`);
+
+  const sim2 = newSim();
+  const q = sim2.fighters[0];
+  run(sim2, CROUCH_TICKS + 2, BTN.DOWN);
+  run(sim2, 1, BTN.DOWN | BTN.UP);
+  run(sim2, 4, 0);
+  check('しゃがみからジャンプできる', q.y > 0, `y=${q.y.toFixed(1)}`);
+}
+
+{
+  // 本題: しゃがめば魔法使いのビームをくぐれる
+  const sim = newSim(['mage', 'swordsman']);
+  place(sim, 600, 900);
+  const [p1, p2] = sim.fighters;
+
+  run(sim, 1, BTN.SKILL, BTN.DOWN);   // 撃つと同時にしゃがみ始める
+  let beamFired = false;
+  for (let i = 0; i < 90; i += 1) {
+    run(sim, 1, 0, BTN.DOWN);         // 照射を最後まで受け切る
+    if (sim.effects.some((e) => e.type === 'beam')) beamFired = true;
+  }
+  check('ビーム自体はちゃんと撃たれている', beamFired);
+  check('しゃがめばビームをくぐれる', !p2.doomed && !p2.isKO && p2.health === p2.maxHealth,
+    `hp=${p2.health} state=${p2.state}`);
+  check('くぐっている間もしゃがみ切っている', p2.crouchDepth === 1, `depth=${p2.crouchDepth}`);
+}
+
+{
+  // 立っていれば当たる（＝上のテストがしゃがみの効果であることの裏取り）
+  const sim = newSim(['mage', 'swordsman']);
+  place(sim, 600, 900);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.SKILL);
+  run(sim, 90, 0);
+  check('立っているとビームに当たる', p2.isKO || p2.doomed, `hp=${p2.health} state=${p2.state}`);
+}
+
+{
+  // 空中からの浮遊照射も、しゃがみでくぐれる（判定はさらに高いので当然）
+  const sim = newSim(['mage', 'swordsman']);
+  place(sim, 600, 900);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.UP);
+  run(sim, 3, 0, BTN.DOWN);
+  run(sim, 1, BTN.SKILL, BTN.DOWN);
+  run(sim, 90, 0, BTN.DOWN);
+  check('低空の浮遊照射もしゃがみでくぐれる', p2.health === p2.maxHealth,
+    `hp=${p2.health} state=${p2.state}`);
+}
+
+{
+  // しゃがんでも打撃は当たる。「しゃがめば全部avoidできる」にはしない
+  const sim = newSim();
+  place(sim, 800, 940);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.ATTACK, BTN.DOWN);
+  run(sim, 40, 0, BTN.DOWN);
+  check('しゃがんでも打撃は当たる', p2.doomed || p2.isKO, `state=${p2.state}`);
+}
+
+{
+  // 追尾弾はしゃがんだ相手を狙い直す
+  const sim = newSim(['mage', 'swordsman']);
+  place(sim, 600, 1000);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.ATTACK, BTN.DOWN);
+  run(sim, 120, 0, BTN.DOWN);
+  check('追尾弾はしゃがんだ相手にも届く', p2.doomed || p2.isKO,
+    `state=${p2.state} n=${sim.projectiles.length}`);
+}
+
+{
+  // CPU はビームをしゃがんでくぐろうとする
+  const sim = newSim(['mage', 'swordsman']);
+  place(sim, 600, 900);
+  const foe = sim.fighters[0];
+  const me = sim.fighters[1];
+  // ビームのモーション中であることを CPU に見せる
+  run(sim, 1, BTN.SKILL);
+  const CpuMod = await import('../src/game/ai.js');
+  const cpu = new CpuMod.CpuController(1, 'hard');
+  let ducked = false;
+  for (let i = 0; i < 40 && !ducked; i += 1) {
+    const bits = cpu.think(sim);
+    if (bits & BTN.DOWN) ducked = true;
+    sim.step([0, bits]);
+  }
+  check('CPU はビームをしゃがんで避けようとする', ducked,
+    `foe.move=${foe.moveId} me.state=${me.state}`);
+}
+
+// ── 空中攻撃 ────────────────────────────────────────────────
+section('空中攻撃');
+for (const [id, attack, skill] of [
+  ['swordsman', 'airSlash', 'diveSlash'],
+  ['berserker', 'airRampage', 'axeKick'],
+  ['mage', 'meteorShot', 'hoverBeamCharge'],
+]) {
+  const sim = newSim([id, 'swordsman']);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 6, 0);
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 2, 0);
+  check(`${id}: 空中で攻撃が出る`, p1.moveId === attack, `move=${p1.moveId}`);
+
+  const sim2 = newSim([id, 'swordsman']);
+  const q = sim2.fighters[0];
+  run(sim2, 1, BTN.UP);
+  run(sim2, 6, 0);
+  run(sim2, 1, BTN.SKILL);
+  run(sim2, 2, 0);
+  check(`${id}: 空中でスキルが出る`, q.moveId === skill, `move=${q.moveId}`);
+}
+
+{
+  // 空中技は着地で打ち切られ、着地硬直に入る
+  const sim = newSim();
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 6, 0);
+  run(sim, 1, BTN.SKILL);
+  check('急降下斬りが出る', p1.moveId === 'diveSlash', `move=${p1.moveId}`);
+  for (let i = 0; i < 60 && p1.y > 0; i += 1) run(sim, 1, 0);
+  check('急降下で素早く着地する', p1.y === 0, `y=${p1.y.toFixed(1)}`);
+  check('着地で技が打ち切られる', p1.state === STATE.LAND, `state=${p1.state}`);
+  check('外すと着地硬直が長い', p1.landLag === p1.def.moves.diveSlash.landLag,
+    `landLag=${p1.landLag}`);
+  run(sim, 10, BTN.RIGHT);
+  check('着地硬直中は動けない', p1.state === STATE.LAND, `state=${p1.state}`);
+}
+
+{
+  // 飛び込みの空中攻撃が地上の相手に当たる
+  const sim = newSim();
+  place(sim, 760, 940);
+  const [p1, p2] = sim.fighters;
+  run(sim, 1, BTN.UP | BTN.RIGHT);
+  run(sim, 16, BTN.RIGHT);
+  run(sim, 1, BTN.ATTACK | BTN.RIGHT);
+  for (let i = 0; i < 40 && p1.comboDisplay < 1; i += 1) run(sim, 1, BTN.RIGHT);
+  check('飛び斬りが地上の相手に当たる', p2.doomed || p2.isKO,
+    `hits=${p1.comboDisplay} state=${p2.state}`);
+}
+
+{
+  // 魔法使いの空中攻撃は斜め下へ弾を落とす
+  const sim = newSim(['mage', 'swordsman']);
+  place(sim, 700, 1000);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 8, 0);
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 14, 0);
+  check('降魔弾が出る', sim.projectiles.some((p) => p.type === 'meteor'),
+    `n=${sim.projectiles.length}`);
+  const m = sim.projectiles.find((p) => p.type === 'meteor');
+  check('弾は斜め下へ飛ぶ', m.vy < 0 && m.vx > 0, `v=(${m.vx.toFixed(1)}, ${m.vy.toFixed(1)})`);
+
+  // 地面に届いたら消える（撃ちっぱなしが床下に残らない）
+  run(sim, 60, 0);
+  check('弾は地面で消える', !sim.projectiles.includes(m), `n=${sim.projectiles.length}`);
+}
+
+{
+  // 魔法使いの空中スキルは、その場に浮き止まったまま照射する
+  const sim = newSim(['mage', 'swordsman']);
+  place(sim, 700, 1100);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 8, 0);
+  run(sim, 1, BTN.SKILL);
+  const yCast = p1.y;
+  const xCast = p1.x;
+  run(sim, 30, BTN.RIGHT);
+  check('浮遊照射の溜めに入る', p1.moveId === 'hoverBeamCharge', `move=${p1.moveId}`);
+  check('溜め中も空中で止まっている', p1.y === yCast && p1.x === xCast,
+    `(${xCast.toFixed(1)}, ${yCast.toFixed(1)}) -> (${p1.x.toFixed(1)}, ${p1.y.toFixed(1)})`);
+  check('空中の魔法陣も術者に追従する',
+    sim.effects.some((e) => e.type === 'magicCircle' && e.follow === p1.index));
+
+  // 1秒後に照射へ移る。撃っている間も浮いたまま
+  run(sim, 34, BTN.RIGHT);
+  check('溜めきると照射に移る', p1.moveId === 'hoverBeam', `move=${p1.moveId}`);
+  check('ビームのエフェクトが出る', sim.effects.some((e) => e.type === 'beam'));
+  check('照射中もその場に浮き止まる', p1.y === yCast && p1.x === xCast,
+    `-> (${p1.x.toFixed(1)}, ${p1.y.toFixed(1)})`);
+
+  // 照射が終われば重力が戻り、落ちて着地する
+  for (let i = 0; i < 260 && p1.y > 0; i += 1) run(sim, 1, 0);
+  check('撃ち終わると落ちてくる', p1.y === 0, `y=${p1.y.toFixed(1)}`);
+}
+
+{
+  // 低空で撃てば地上の相手に当たる（＝撃つ高さを選ぶ技になっている）
+  const sim = newSim(['mage', 'swordsman']);
+  place(sim, 700, 1000);
+  const [p1, p2] = sim.fighters;
+  run(sim, 1, BTN.UP);
+  run(sim, 2, 0); // 跳んだ直後＝まだ低い
+  run(sim, 1, BTN.SKILL);
+  for (let i = 0; i < 160 && !p2.doomed; i += 1) run(sim, 1, 0, BTN.GUARD);
+  check('低空からの照射は地上の相手に届く', p2.doomed || p2.isKO,
+    `y=${p1.y.toFixed(1)} state=${p2.state}`);
+  check('照射はガードごと崩す', p2.health === 0, `hp=${p2.health}`);
 }
 
 // ── 試合進行 ────────────────────────────────────────────────
@@ -326,18 +745,20 @@ section('試合進行');
 {
   const sim = newSim();
   const [p1, p2] = sim.fighters;
-  p2.health = 1; // 次の一撃で決着
   place(sim, 800, 930);
 
   run(sim, 1, BTN.ATTACK);
-  for (let i = 0; i < 40 && !p2.isKO; i += 1) run(sim, 1, 0);
-  check('体力0でKOになる', p2.isKO, `state=${p2.state}`);
+  for (let i = 0; i < 90 && !p2.isKO; i += 1) run(sim, 1, 0);
+  check('一撃でKOになる', p2.isKO, `state=${p2.state}`);
   check('ラウンド終了フェーズに移る', sim.phase === 'roundEnd', `phase=${sim.phase}`);
   check('勝者にラウンドが加算される', sim.wins[0] === 1, `wins=${sim.wins}`);
 
   run(sim, 160, 0);
   check('次のラウンドが始まる', sim.round === 2 && sim.phase === 'intro',
     `round=${sim.round} phase=${sim.phase}`);
+  check('次のラウンドでは体力が満タンに戻る',
+    sim.fighters[1].health === sim.fighters[1].maxHealth && !sim.fighters[1].doomed,
+    `hp=${sim.fighters[1].health}`);
 }
 
 {

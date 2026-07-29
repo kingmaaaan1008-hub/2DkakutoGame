@@ -18,9 +18,45 @@ export const STAGE_WIDTH = 1800;
 /** 端に寄りすぎないように、左右この分だけ内側を歩ける範囲とする。 */
 export const STAGE_MARGIN = 90;
 
-export const ROUND_TIME = 60;
-export const ROUNDS_TO_WIN = 2;
+/**
+ * 1ラウンドは「先に技を通した方が勝ち」なので、当たらないまま睨み合う時間が
+ * そのままラウンド時間になる。決着は一瞬なので短めにしてある。
+ */
+export const ROUND_TIME = 45;
+/** 一発で終わるぶん、取り返しがきくように取得ラウンド数を増やしてある。 */
+export const ROUNDS_TO_WIN = 3;
 export const MAX_HEALTH = 1000;
+
+/**
+ * ジャンプ後に空中でさらに跳べる回数（2段ジャンプ）。
+ * このゲームは一発が致命傷なので、避ける手段を厚くするためのもの。
+ */
+export const AIR_JUMPS = 1;
+/**
+ * 空中ジャンプの初速。地上ジャンプ比。
+ * 1段目を「身長ぶん跳べる」高さまで上げたので、2段目までそのまま伸びると
+ * 高く飛びすぎる。2段目の跳び上がりが以前と同じくらいになる比率にしてある
+ * （2段ジャンプは高さを稼ぐためではなく、軌道をずらすための手段なので）。
+ */
+export const AIR_JUMP_VY_SCALE = 0.68;
+
+/**
+ * ジャンプ初速の目安を「跳びたい高さ」から逆算する。
+ *
+ * 1ティックごとに y += vy; vy -= GRAVITY と積分するので、
+ * 到達高度はおよそ vy^2 / (2 * GRAVITY)（離散なので実際はもう少し上まで行く）。
+ * キャラ定義の jumpVy は、この式に自分の身長を入れた値にしてある
+ * ＝ **どのキャラも自分の身長ぶんだけ跳べる**。
+ */
+export const jumpVyForHeight = (height) => Math.sqrt(2 * GRAVITY * height);
+
+/**
+ * しゃがみ切る（また立ち上がり切る）までのティック数。
+ * この間は姿勢に合わせてやられ判定も少しずつ縮む。
+ * 押した瞬間に judgement box が縮むと見た目と食い違うので、
+ * 絵の進み具合とやられ判定を同じ値から作っている。
+ */
+export const CROUCH_TICKS = 10;
 
 /**
  * 入力は 1 プレイヤーにつき整数 1 個のビットマスク。
@@ -35,6 +71,7 @@ export const BTN = {
   ATTACK: 1 << 3,
   SKILL: 1 << 4,
   GUARD: 1 << 5,
+  DOWN: 1 << 6,
 };
 
 /** 押しっぱなしではなく「押した瞬間」を拾いたい技のための先行入力猶予（ティック）。 */
@@ -55,6 +92,7 @@ export const STATE = {
   IDLE: 'idle',
   WALK: 'walk',
   DASH: 'dash',
+  CROUCH: 'crouch',
   JUMP: 'jump',
   LAND: 'land',
   GUARD: 'guard',

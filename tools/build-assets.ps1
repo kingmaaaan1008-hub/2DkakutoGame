@@ -41,21 +41,24 @@ $CONFIG = @(
   @{
     id = 'swordsman'; targetHeight = 215; anchorMetric = 'body'
     sheets = @(
-      @{ file = 'swordsman';       ref = 'idle'; dx = 0; dy = 0 },
-      @{ file = 'swordsman_extra'; ref = 'land'; dx = 0; dy = 0 }
+      @{ file = 'swordsman';        ref = 'idle';   dx = 0; dy = 0 },
+      @{ file = 'swordsman_extra';  ref = 'land';   dx = 0; dy = 0 },
+      @{ file = 'swordsman_crouch'; ref = 'crouch'; dx = 0; dy = 0 }
     )
   },
   @{
     id = 'berserker'; targetHeight = 225; anchorMetric = 'body'
     sheets = @(
-      @{ file = 'berserker'; ref = 'idle'; dx = 0; dy = 0 }
+      @{ file = 'berserker';        ref = 'idle';   dx = 0; dy = 0 },
+      @{ file = 'berserker_crouch'; ref = 'crouch'; dx = 0; dy = 0 }
     )
   },
   @{
     id = 'mage'; targetHeight = 212; anchorMetric = 'body'
     sheets = @(
-      @{ file = 'mage';       ref = 'idle'; dx = 0; dy = 0 },
-      @{ file = 'mage_extra'; ref = 'guard'; dx = 0; dy = 0 }
+      @{ file = 'mage';        ref = 'idle';   dx = 0; dy = 0 },
+      @{ file = 'mage_extra';  ref = 'guard';  dx = 0; dy = 0 },
+      @{ file = 'mage_crouch'; ref = 'crouch'; dx = 0; dy = 0 }
     )
   }
 )

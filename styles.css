@@ -65,6 +65,18 @@ html, body {
 }
 .panel.wide { width: min(920px, 100%); }
 
+/* タイトルは「一発当たったら即死な」＋「2D 格闘」の2段。
+   長い前置きを小さく載せることで、ロゴ本体の大きさを保っている。 */
+.logo-lead {
+  font-size: clamp(13px, 3.4vw, 18px);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-align: center;
+  color: var(--muted);
+  margin-bottom: -2px;
+}
+.logo-lead span { color: #ff6b6b; }
+
 .logo {
   font-size: clamp(30px, 7vw, 48px);
   font-weight: 800;
@@ -219,8 +231,9 @@ html, body {
 .touch.hidden { display: none; }
 
 /*
- * 左右どちらのパッドも「下段に 2 つ・その真ん中の上に 1 つ」。
- * 上段のボタン(.top)は 2 列ぶんにまたがるので、下 2 つの中央に来る。
+ * 左右どちらのパッドも「中段に 2 つ・その真ん中の上下に 1 つずつ」。
+ * .top / .bottom は 2 列ぶんにまたがるので、中央の 2 つの真ん中に来る。
+ * 左パッドは ジャンプ / ◀ ▶ / しゃがみ の十字になる。
  */
 .pad {
   position: absolute;
@@ -230,7 +243,8 @@ html, body {
   gap: 10px;
   justify-items: center;
 }
-.pad .top { grid-column: 1 / -1; }
+.pad .top,
+.pad .bottom { grid-column: 1 / -1; }
 .pad-left { left: calc(12px + var(--safe-l)); }
 .pad-right { right: calc(12px + var(--safe-r)); gap: 9px; }
 
@@ -255,6 +269,7 @@ html, body {
 .tbtn.skill { background: rgba(180, 110, 240, 0.45); }
 .tbtn.jump { background: rgba(70, 150, 210, 0.45); }
 .tbtn.guard { background: rgba(90, 190, 140, 0.45); }
+.tbtn.crouch { background: rgba(210, 160, 60, 0.45); }
 
 /* 画面が低いとき（横向きスマホ）はボタンを少し詰める */
 @media (max-height: 430px) {

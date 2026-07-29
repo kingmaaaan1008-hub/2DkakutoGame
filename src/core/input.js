@@ -16,6 +16,7 @@ const KEYMAP = [
     KeyA: BTN.LEFT,
     KeyD: BTN.RIGHT,
     KeyW: BTN.UP,
+    KeyS: BTN.DOWN,
     KeyJ: BTN.ATTACK,
     KeyK: BTN.SKILL,
     KeyL: BTN.GUARD,
@@ -25,6 +26,7 @@ const KEYMAP = [
     ArrowLeft: BTN.LEFT,
     ArrowRight: BTN.RIGHT,
     ArrowUp: BTN.UP,
+    ArrowDown: BTN.DOWN,
     Comma: BTN.ATTACK,
     Period: BTN.SKILL,
     Slash: BTN.GUARD,
@@ -40,6 +42,7 @@ const PAD_BUTTONS = {
   4: BTN.GUARD, // L1
   5: BTN.SKILL, // R1
   12: BTN.UP, // D-pad 上
+  13: BTN.DOWN, // D-pad 下
   14: BTN.LEFT, // D-pad 左
   15: BTN.RIGHT, // D-pad 右
 };
@@ -108,13 +111,14 @@ export class InputManager {
 
   /**
    * 画面上の仮想パッドを繋ぐ。
-   * `data-btn="left|right|up|attack|skill|guard"` を持つ要素を拾う。
+   * `data-btn="left|right|up|down|attack|skill|guard"` を持つ要素を拾う。
    */
   attachTouch(root) {
     const NAMES = {
       left: BTN.LEFT,
       right: BTN.RIGHT,
       up: BTN.UP,
+      down: BTN.DOWN,
       attack: BTN.ATTACK,
       skill: BTN.SKILL,
       guard: BTN.GUARD,
@@ -166,6 +170,7 @@ export class InputManager {
       if (ax < -STICK_DEADZONE) bits |= BTN.LEFT;
       if (ax > STICK_DEADZONE) bits |= BTN.RIGHT;
       if (ay < -STICK_DEADZONE) bits |= BTN.UP;
+      if (ay > STICK_DEADZONE) bits |= BTN.DOWN;
       out[this.solo ? 0 : slot] |= bits;
       slot += 1;
     }

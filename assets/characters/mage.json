@@ -2,7 +2,7 @@
   "id": "mage",
   "image": "mage.webp",
   "atlasWidth": 2096,
-  "atlasHeight": 2643,
+  "atlasHeight": 2870,
   "sourceFps": 10,
   "scale": 0.46187,
   "height": 212,
@@ -116,6 +116,16 @@
       "ax": 86.66,
       "ay": 253.57,
       "src": "mage_extra"
+    },
+    "crouch": {
+      "x": 0,
+      "y": 2643,
+      "cw": 168,
+      "ch": 227,
+      "frames": 8,
+      "ax": 83.71,
+      "ay": 224.01,
+      "src": "mage_crouch"
     }
   }
 }

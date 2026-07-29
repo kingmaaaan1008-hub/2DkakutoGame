@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0d1020">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>2D 格闘ゲーム</title>
+<title>一発当たったら即死な2D格闘</title>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -17,6 +17,7 @@
   <!-- 読み込み -->
   <section class="screen is-active" id="screen-loading">
     <div class="panel">
+      <p class="logo-lead">一発当たったら<span>即死</span>な</p>
       <h1 class="logo">2D <span>格闘</span></h1>
       <p class="loading-text" id="loading-text">読み込み中…</p>
       <div class="loading-bar"><div id="loading-fill"></div></div>
@@ -26,22 +27,43 @@
   <!-- タイトル / モード選択 -->
   <section class="screen" id="screen-title">
     <div class="panel">
+      <p class="logo-lead">一発当たったら<span>即死</span>な</p>
       <h1 class="logo">2D <span>格闘</span></h1>
-      <p class="tagline">スマホ・PC 両対応 / 3キャラ</p>
+      <p class="tagline">先に技を通した方が勝ち。かすっただけで終わります。</p>
       <div class="menu">
         <button class="btn primary" data-mode="cpu">CPU と対戦</button>
         <button class="btn" data-mode="versus">2人で対戦（同じ端末）</button>
         <button class="btn" data-mode="online">オンライン対戦</button>
       </div>
+      <details class="help" open>
+        <summary>ルール</summary>
+        <div class="help-body">
+          <p><b>攻撃が当たったらその時点で負けです。</b>多段技なら 1 打目でも最終打でも同じ。
+            かすった瞬間に体力は全部消えます。</p>
+          <p>連続ヒット技は、当たった数だけ被弾モーションが続きます。
+            <b>コンボが途切れたところで倒れます。</b></p>
+          <p><b>ガードは通ります。</b>ただし<b>スキル</b>はガードごと崩すので、守り一辺倒では勝てません。</p>
+          <p>避ける手段は <b>2段ジャンプ</b>・<b>しゃがみ</b>・ダッシュ・ガードの4つ。
+            <b>ジャンプ中も攻撃とスキルが出せます。</b></p>
+          <p><b>しゃがめば魔法使いの照射ビームをくぐれます。</b>ビームはガードできないので、
+            しゃがみが唯一の答えです。ただし沈むのにも立つのにも時間がかかるので、
+            読んで先に構える必要があります（打撃はしゃがんでも当たります）。</p>
+          <p>照射は撃つまでに <b>1 秒の溜め</b>があり、その間ずっと<b>足元に魔法陣</b>が回ります。
+            これが合図なので、見てからしゃがんでも間に合います。
+            逆に魔法使いは、その 1 秒まったくの無防備になります。</p>
+        </div>
+      </details>
       <details class="help">
         <summary>操作方法</summary>
         <div class="help-body">
-          <p><b>スマホ</b>: 画面下のボタン。◀▶ を素早く2回で <b>ダッシュ</b>。</p>
-          <p><b>1P キーボード</b>: A / D 移動、W ジャンプ、J 攻撃、K スキル、L ガード</p>
-          <p><b>2P キーボード</b>: ← / → 移動、↑ ジャンプ、, 攻撃、. スキル、/ ガード</p>
-          <p><b>ゲームパッド</b>: スティック・十字キー移動、A 攻撃、X スキル、B ガード、Y ジャンプ</p>
+          <p><b>スマホ</b>: 画面下のボタン。◀▶ を素早く2回で <b>ダッシュ</b>。ジャンプ2回で <b>2段ジャンプ</b>。</p>
+          <p><b>1P キーボード</b>: A / D 移動、W ジャンプ、S しゃがみ、J 攻撃、K スキル、L ガード</p>
+          <p><b>2P キーボード</b>: ← / → 移動、↑ ジャンプ、↓ しゃがみ、, 攻撃、. スキル、/ ガード</p>
+          <p><b>ゲームパッド</b>: スティック・十字キー移動（下でしゃがみ）、A 攻撃、X スキル、B ガード、Y ジャンプ</p>
           <p>歩き中は常に相手を向きます。同じ方向を2回押すとダッシュ（向いた方向へ走る）。</p>
-          <p><b>スキル</b>はガードを崩し、当てると相手をダウンさせます（外すと隙が大きい）。</p>
+          <p><b>空中で攻撃 / スキル</b>を押すと、それぞれ専用の空中技が出ます。
+            剣士と狂戦士の空中スキルは斜め下へ落ちる大技で、外すと着地の隙が大きくなります。
+            魔法使いは空中で止まって照射するので、<b>撃つ高さ</b>で地上を薙ぐか対空にするかが決まります。</p>
         </div>
       </details>
     </div>
@@ -110,6 +132,7 @@
       <button class="tbtn act jump top" data-btn="up">ジャンプ</button>
       <button class="tbtn dir" data-btn="left" aria-label="左">◀</button>
       <button class="tbtn dir" data-btn="right" aria-label="右">▶</button>
+      <button class="tbtn act crouch bottom" data-btn="down">しゃがみ</button>
     </div>
     <div class="pad pad-right">
       <button class="tbtn act guard top" data-btn="guard">ガード</button>

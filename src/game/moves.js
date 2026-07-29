@@ -24,7 +24,9 @@
  * @property {number} start        判定の出るフレーム
  * @property {number} end          判定の終わるフレーム（含む）
  * @property {Box} box             判定範囲
- * @property {number} damage       ダメージ
+ * @property {number} damage       ダメージ。**このゲームでは未使用**。
+ *                                 一発当たったら即死なので、当たった時点で体力は 0 になる。
+ *                                 技の重さの目安として値だけ残してある。
  * @property {number} hitstun      ヒット時に相手が硬直するフレーム
  * @property {number} blockstun    ガード時に相手が硬直するフレーム
  * @property {number} hitstop      ヒット時に両者の時間が止まるフレーム（手応え演出）
@@ -64,15 +66,29 @@ const MOVE_DEFAULTS = {
    * 実際のコマ数は描画側しか知らないので、はみ出した指定は描画時に丸められる。
    */
   animRange: null,
-  /** 空中でも出せるか。 */
-  airOk: false,
+  /**
+   * 空中技の着地硬直。空中で出した技は着地した時点で打ち切られ、
+   * ここで指定したフレーム数だけ動けなくなる。省略すると通常の着地硬直。
+   * 急降下技のように「外したら大きな隙」にしたい技はここを伸ばす。
+   */
+  landLag: null,
   /** 出始めに相手の方を向き直すか。false だと出した瞬間の向きで固定。 */
   turnOnStart: true,
   hits: [],
-  /** 自身の移動。{start,end,vx,vy,stopOnHit} vx は前方向が正。 */
+  /**
+   * 自身の移動。{start,end,vx,vy,stopOnHit} vx は前方向が正。
+   * vy は書いた区間のあいだ毎フレーム上書きされるので、重力より優先される。
+   * `vy: 0` と書けば、その区間だけ落下が止まって空中に留まる。
+   */
   motion: [],
   /** 弾・持続判定などの発生。{frame, type, ...任意パラメータ} */
   spawns: [],
+  /**
+   * true にすると、技が始まった時点で**自分が出した飛び道具が全部消える**。
+   * 「弾を撒いて足止めしておいてから大技」という重ねがけを封じるためのもの。
+   * どちらか一方しか場に出せなくなるので、撃つ前に選ばせることになる。
+   */
+  clearsOwnProjectiles: false,
   /** 連携入力。{from,to,button,move} の窓の間にボタンを押すと move へ繋がる。 */
   chains: [],
   /**

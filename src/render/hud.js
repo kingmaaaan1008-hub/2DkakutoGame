@@ -1,8 +1,9 @@
 /**
  * 対戦中の UI（体力ゲージ・タイマー・ラウンド表示など）。
  *
- * 体力バーの「遅れて減る赤いバー」だけは描画側で補間しているので、
- * ここに表示専用の状態を持っている。試合結果には影響しない。
+ * 体力バーは一発当たれば一気に空になる。遅れて追いつく赤いバーだけが
+ * ゆっくり減っていくので、「たった今どちらが死んだか」がここで読み取れる。
+ * この補間は描画側だけの状態で、試合結果には影響しない。
  */
 import { PHASE } from '../game/sim.js';
 import { ROUND_INTRO_TICKS } from '../game/constants.js';
@@ -74,6 +75,14 @@ export class Hud {
     ctx.lineWidth = 1;
     ctx.strokeRect(left, top, barW, barH);
 
+    // 致命傷を受けてから倒れるまで（＝コンボを食らっている間）は枠が赤く明滅する
+    if (f.doomed) {
+      const pulse = 0.5 + 0.5 * Math.sin(f.stateTimer * 0.5);
+      ctx.strokeStyle = `rgba(255,86,72,${0.45 + pulse * 0.55})`;
+      ctx.lineWidth = 2.5 * s;
+      ctx.strokeRect(left - 2 * s, top - 2 * s, barW + 4 * s, barH + 4 * s);
+    }
+
     // 名前
     ctx.font = `600 ${Math.round(15 * s)}px ${FONT}`;
     ctx.fillStyle = '#e9edf7';
@@ -118,6 +127,11 @@ export class Hud {
     ctx.font = `600 ${Math.round(12 * s)}px ${FONT}`;
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
     ctx.fillText(`ROUND ${sim.round}`, cx, cy + r + 12 * s);
+
+    // ルールの念押し。一発で終わることを常に見えるところに出しておく
+    ctx.font = `700 ${Math.round(11 * s)}px ${FONT}`;
+    ctx.fillStyle = 'rgba(255,120,110,0.8)';
+    ctx.fillText('1 HIT = K.O.', cx, cy + r + 28 * s);
     ctx.restore();
   }
 

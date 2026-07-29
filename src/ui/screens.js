@@ -166,11 +166,16 @@ export class CharacterSelect {
     const def = this.roster.find((c) => c.id === currentId);
     const attack = def.moves[def.attackMove];
     const skill = def.moves[def.skillMove];
+    const airAttack = def.airAttackMove ? def.moves[def.airAttackMove] : null;
+    const airSkill = def.airSkillMove ? def.moves[def.airSkillMove] : null;
     const chain = attack.chains?.[0] ? def.moves[attack.chains[0].move] : null;
     this.dom.info.innerHTML =
       `<b>${def.name}</b> — ${def.subtitle}<br>` +
       `攻撃: ${attack.label}${chain ? `（続けて攻撃で「${chain.label}」）` : ''}<br>` +
-      `スキル: ${skill.label}（ガードを崩す / 隙が大きい）`;
+      `スキル: ${skill.label}（ガードを崩す / 隙が大きい）` +
+      (airAttack && airSkill
+        ? `<br>空中: ${airAttack.label} / ${airSkill.label}`
+        : '');
   }
 
   /** サムネイルの待機モーションを回す。 */

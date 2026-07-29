@@ -194,6 +194,7 @@ export class Simulation {
         oy: spawn.origin?.y ?? 0,
         halfHeight: spawn.halfHeight ?? 0,
         length: spawn.length ?? 0,
+        radius: spawn.radius ?? 0,
       });
       if (spawn.shake) this.shake = Math.max(this.shake, spawn.shake);
       return;
@@ -210,17 +211,36 @@ export class Simulation {
       if (alive >= def.maxAlive) return;
     }
 
+    // 発生位置と飛ぶ向きは技側で上書きできる。
+    // dir は「前方向が正・上が正」で、長さは気にしなくてよい（ここで正規化する）。
+    const origin = spawn.origin ?? def.origin;
+    const dir = spawn.dir ?? { x: 1, y: 0 };
+    const len = Math.sqrt(dir.x * dir.x + dir.y * dir.y) || 1;
+
     this.projectiles.push({
       type: spawn.type,
       owner: fighter.index,
-      x: fighter.x + fighter.facing * def.origin.x,
-      y: fighter.y + def.origin.y,
-      vx: fighter.facing * def.speed,
-      vy: 0,
+      x: fighter.x + fighter.facing * origin.x,
+      y: fighter.y + origin.y,
+      vx: (fighter.facing * def.speed * dir.x) / len,
+      vy: (def.speed * dir.y) / len,
       facing: fighter.facing,
       life: def.lifetime,
       age: 0,
     });
+  }
+
+  /**
+   * 指定プレイヤーが出した飛び道具を全部消す。
+   * 技データの clearsOwnProjectiles から呼ばれる。
+   */
+  clearProjectilesOf(owner) {
+    for (let i = this.projectiles.length - 1; i >= 0; i -= 1) {
+      const p = this.projectiles[i];
+      if (p.owner !== owner) continue;
+      this.addEffect('pop', p.x, p.y, { life: 14 });
+      this.projectiles.splice(i, 1);
+    }
   }
 
   _stepProjectiles() {
@@ -230,8 +250,10 @@ export class Simulation {
       const target = this.fighters[1 - p.owner];
 
       if (def.turnRate > 0 && !target.isKO) {
-        // 胴体の中心あたりを狙う
-        homeToward(p, target.x, target.y + 110, def);
+        // 胴体の中心あたりを狙う。しゃがまれたらそのぶん低く狙い直す
+        // （固定値だと、しゃがんだ相手の頭上を素通りしてしまう）
+        const hurt = target.hurtBox();
+        homeToward(p, target.x, hurt.y + hurt.h * 0.55, def);
       }
       p.x += p.vx;
       p.y += p.vy;
@@ -239,7 +261,8 @@ export class Simulation {
       p.life -= 1;
       p.facing = p.vx >= 0 ? 1 : -1;
 
-      let remove = p.life <= 0 || p.x < -60 || p.x > STAGE_WIDTH + 60 || p.y < -40;
+      let remove =
+        p.life <= 0 || p.x < -60 || p.x > STAGE_WIDTH + 60 || p.y < (def.floorY ?? -40);
 
       // ダウン中の相手は弾もすり抜ける（消えずに通過する）
       if (!remove && !target.isKO && !target.invulnerable && target.hitstop === 0) {
@@ -274,6 +297,9 @@ export class Simulation {
       oy: opts.oy ?? 0,
       halfHeight: opts.halfHeight ?? 0,
       length: opts.length ?? 0,
+      radius: opts.radius ?? 0,
+      /** 演出の強さ。血しぶきの量などに掛かる。 */
+      power: opts.power ?? 1,
       seed: this.rng.int(0, 1000),
     });
   }

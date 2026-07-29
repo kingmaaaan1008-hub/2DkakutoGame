@@ -24,8 +24,11 @@ export const PROJECTILES = {
      * 同時に出しておける数。連射そのものは残しつつ、撃ち切ると弾切れの間が空く。
      * これが無いと寿命 160F ÷ 連射間隔 16F で常時 10 発が浮き、
      * 相手に近づく隙間が無くなる。
+     *
+     * 1 発。撃った弾が消えるか当たるまで次が出ないので、
+     * 弾幕を張って近づけないようにする戦い方はできない。
      */
-    maxAlive: 2,
+    maxAlive: 1,
     /**
      * 発生位置（足元原点・前方向が正）。杖の先端。
      * cast シートで弾が出る 5 コマ目の水晶の位置の実測値。杖を頭上に掲げた形なので
@@ -44,6 +47,33 @@ export const PROJECTILES = {
     /** 見た目のためのヒント。renderer が色と形を決める。 */
     style: 'orb',
     color: '#7fe4ff',
+  },
+
+  /**
+   * 魔法使いの空中攻撃「降魔弾」。
+   * 空中から斜め下へ撃ち落とす。追尾しないぶん速く、地面に届くと消える。
+   * 空中攻撃なので、地上の弾と同じくガードは通る。
+   */
+  meteor: {
+    radius: 24,
+    speed: 10.5,
+    turnRate: 0,
+    lifetime: 90,
+    /** 同時に出せる数。跳ぶたびに 1〜2 発、という手数に収める。 */
+    maxAlive: 2,
+    origin: { x: 30, y: 160 },
+    /** この高さより下へ落ちたら消える（地面で弾ける）。 */
+    floorY: 8,
+    damage: 60,
+    hitstun: 22,
+    blockstun: 12,
+    hitstop: 7,
+    pushHit: 5,
+    pushBlock: 3,
+    guardBreak: false,
+    destroyOnHit: true,
+    style: 'orb',
+    color: '#ff9a5a',
   },
 };
 
