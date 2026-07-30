@@ -24,12 +24,14 @@ import { isProjectile } from './projectiles.js';
 /**
  * 難易度プリセット。
  *
- * `react` は決めた行動を維持するティック数（小さいほど反応が速い）。
- * ほかは「その状況に気づいて対処する確率」。0 なら見逃し、1 なら必ず拾う。
+ * `hold` は決めた行動を維持する時間の倍率。大きいほど「読み直しが遅い」＝
+ * 状況が変わっても前の判断を引きずるので、弱くなる。
+ * ほかは「その手をどれだけ重く見るか」。大きいほどその状況で正しく選べる。
  */
 export const DIFFICULTY = {
   easy: {
     react: 20,
+    hold: 1.9,
     guard: 0.3,
     punish: 0.18,
     aggression: 0.4,
@@ -39,6 +41,7 @@ export const DIFFICULTY = {
   },
   normal: {
     react: 9,
+    hold: 1.25,
     guard: 0.62,
     punish: 0.55,
     aggression: 0.6,
@@ -48,6 +51,7 @@ export const DIFFICULTY = {
   },
   hard: {
     react: 3,
+    hold: 0.8,
     guard: 0.94,
     punish: 0.92,
     aggression: 0.8,
@@ -65,6 +69,21 @@ const PROJECTILE_REACH = 900;
 
 /** これより発生が遅い技は「振ったら戻れない大技」として扱う。 */
 const SLOW_STARTUP = 20;
+
+/** この高さより下に収まっている攻撃は、跳べば頭の上を通せる。 */
+const JUMP_CLEAR_Y = 170;
+
+/**
+ * 逃げる手が間に合うのに必要な猶予（判定が出るまでのフレーム数）。
+ * 跳ぶ・下がるは動き出しに時間がかかるので、
+ * 残り時間を見ずに選ぶと「逃げようとして食らう」になる。
+ */
+const JUMP_ESCAPE_FRAMES = 9;
+const RETREAT_ESCAPE_FRAMES = 7;
+
+/** 気分の持続（ティック）。数秒ごとに攻めっ気と守りっ気が入れ替わる。 */
+const MOOD_MIN = 90;
+const MOOD_MAX = 220;
 
 /** キャラ定義ごとの技の性能。技データから割り出したものを覚えておく。 */
 const PROFILES = new WeakMap();
@@ -138,6 +157,16 @@ export class CpuController {
     this.cfg = DIFFICULTY[level] ?? DIFFICULTY.normal;
     this.plan = { bits: 0, ticks: 0 };
     this.cooldown = 0;
+    /** 直前に選んだ手と、それが続いた回数。同じ答えの連続を避けるのに使う。 */
+    this.lastAct = '';
+    this.repeat = 0;
+    /**
+     * 気分。'push'（攻め） / 'hold'（守り） / 'even'（ふつう）を
+     * 数秒ごとに切り替える。同じ状況でも局面によって答えが変わるので、
+     * 「この距離ならこう来る」と読み切られにくくなる。
+     */
+    this.mood = 'even';
+    this.moodTicks = 0;
   }
 
   /**
@@ -253,7 +282,86 @@ export class CpuController {
   }
 
   /**
+   * 跳べば頭の上を通せる攻撃か。しゃがみの逆で、判定が低いところに
+   * 収まっているならジャンプで越えられる。ガード一択にしないための逃げ道。
+   */
+  _isJumpable(opponent) {
+    const hits = this._upcomingHits(opponent);
+    if (hits.length === 0) return false;
+    const lift = opponent.y;
+    return hits.every((h) => h.box.y + h.box.h + lift < JUMP_CLEAR_Y);
+  }
+
+  /** 相手の判定が出るまでの残りフレーム。もう出ているなら 0。 */
+  _framesUntilHit(opponent) {
+    const move = opponent.currentMove();
+    if (!move) return Infinity;
+    let scan = move;
+    let offset = -opponent.moveFrame;
+    for (let guard = 0; scan && guard < 4; guard += 1) {
+      for (const h of scan.hits) {
+        const at = offset + h.start;
+        if (at >= 0) return at;
+      }
+      offset += scan.total;
+      scan = scan.onEnd ? opponent.def.moves[scan.onEnd] : null;
+    }
+    return 0;
+  }
+
+  /**
+   * 候補の中から 1 つ選ぶ。重みは「その状況でどれだけ有効か」。
+   *
+   * 一番良い手を毎回選ぶと、人間は数ラウンドで読んで対策してくる。
+   * 有効な手が複数あるなら混ぜる。あわせて直前と同じ手は重みを落として、
+   * 同じ状況で同じ答えを繰り返さないようにしている。
+   */
+  _choose(rng, options) {
+    let total = 0;
+    for (const o of options) {
+      o.w = Math.max(0, o.weight) * (1 + this.moodBias(o.act));
+      if (o.act === this.lastAct) o.w *= this.repeat >= 2 ? 0.25 : 0.55;
+      total += o.w;
+    }
+    if (total <= 0) return this._commit({ act: 'wait', bits: 0, ticks: this.cfg.react });
+    let roll = rng.next() * total;
+    for (const o of options) {
+      roll -= o.w;
+      if (roll <= 0) return this._commit(o);
+    }
+    return this._commit(options[options.length - 1]);
+  }
+
+  /** 気分による重みの偏り。攻めっ気・守りっ気を数秒単位で揺らす。 */
+  moodBias(act) {
+    const push = act === 'attack' || act === 'skill' || act === 'rush' || act === 'jumpIn';
+    const hold = act === 'guard' || act === 'retreat' || act === 'duck' || act === 'wait';
+    if (this.mood === 'push') return push ? 0.45 : hold ? -0.3 : 0;
+    if (this.mood === 'hold') return hold ? 0.45 : push ? -0.3 : 0;
+    return 0;
+  }
+
+  _commit(option) {
+    if (option.act === this.lastAct) this.repeat += 1;
+    else {
+      this.lastAct = option.act;
+      this.repeat = 1;
+    }
+    // 決めた行動を維持する時間は難易度で伸縮させる。
+    // 弱い設定ほど長く引きずり、状況の変化に置いていかれる。
+    const base = option.ticks ?? this.cfg.react;
+    this.plan = { bits: option.bits, ticks: Math.max(2, Math.round(base * this.cfg.hold)) };
+    if (option.cooldown) this.cooldown = option.cooldown;
+    return option.bits;
+  }
+
+  /**
    * そのティックの入力を返す。
+   *
+   * 状況ごとに「有効な手」を重み付きで並べ、そこから選ぶ。
+   * 最善手を毎回選ぶのが一番勝ちやすいが、それだと数ラウンドで読まれて
+   * 対策される。読まれないことも強さの一部なので、有効な手が複数あるなら混ぜる。
+   *
    * @param {import('./sim.js').Simulation} sim
    */
   think(sim) {
@@ -262,6 +370,14 @@ export class CpuController {
     if (!sim.isRunning || me.isKO) return 0;
 
     if (this.cooldown > 0) this.cooldown -= 1;
+
+    // 気分を数秒ごとに入れ替える
+    if (this.moodTicks > 0) this.moodTicks -= 1;
+    else {
+      const roll = sim.rng.next();
+      this.mood = roll < 0.34 ? 'push' : roll < 0.68 ? 'hold' : 'even';
+      this.moodTicks = sim.rng.int(MOOD_MIN, MOOD_MAX);
+    }
 
     // 決めた行動は数ティック維持する。毎フレーム考え直すと
     // 入力が細切れになってダッシュもガードも成立しないため。
@@ -283,104 +399,148 @@ export class CpuController {
     const ranged = prof.attack.projectile;
     const idealRange = ranged ? 430 : hitRange * 0.85;
 
-    // 0. 空中では空中技と2段ジャンプしか選べないので、先に分けて考える。
-    //    降り際（vy < 0）に振ると地上の相手に当たりやすい。
+    // ── 空中 ──────────────────────────────────────────────
+    // 空中では空中技と2段ジャンプしか選べないので、先に分けて考える。
     if (me.airborne && me.state === STATE.JUMP) {
-      let air = 0;
-      if (dist < 220 && me.vy < 0 && !foe.invulnerable && rng.chance(cfg.aggression)) {
-        air = rng.chance(0.3) ? BTN.SKILL : BTN.ATTACK;
-      } else if (me.airJumps > 0 && this._incomingAttack(foe) && rng.chance(cfg.guard)) {
-        // 一発が致命傷なので、跳び直して軌道をずらす
-        air = BTN.UP;
-      } else if (dist > 200) {
-        air = toFoe;
+      const opts = [];
+      const falling = me.vy < 0;
+      if (dist < 240 && falling && !foe.invulnerable) {
+        // 降り際に振ると地上の相手に当たりやすい
+        opts.push({ act: 'attack', bits: BTN.ATTACK, ticks: 5, weight: cfg.aggression * 3 });
+        opts.push({ act: 'skill', bits: BTN.SKILL, ticks: 5, weight: cfg.aggression });
       }
-      this.plan = { bits: air, ticks: 5 };
-      return air;
+      if (me.airJumps > 0) {
+        // 一発が致命傷なので、跳び直して軌道をずらす。危ないときは特に
+        const danger = this._incomingAttack(foe) ? 3 : 0.6;
+        opts.push({ act: 'jumpIn', bits: BTN.UP | toFoe, ticks: 5, weight: cfg.guard * danger });
+        opts.push({ act: 'retreat', bits: BTN.UP | away, ticks: 5, weight: cfg.guard * danger * 0.6 });
+      }
+      opts.push({ act: 'rush', bits: toFoe, ticks: 5, weight: dist > 200 ? 2 : 0.5 });
+      opts.push({ act: 'wait', bits: 0, ticks: 5, weight: 0.6 });
+      return this._choose(rng, opts);
     }
 
-    let bits = 0;
-    let ticks = cfg.react;
+    // ── 相手の技が来ている ────────────────────────────────
+    const incoming = this._incomingAttack(foe);
+    const threat = incoming ? this._threatRange(foe) : 0;
+    if (incoming && dist <= threat + 40) {
+      const opts = [];
+      // 判定が出るまでの残り。逃げる手はこれが足りていないと間に合わない
+      const until = this._framesUntilHit(foe);
 
-    // 1. ビームのように高いところだけを薙ぐ攻撃は、しゃがんでくぐる。
-    //    ガードより先に見るのは、ビームがガード不能だから。
-    //    ビームは画面端まで届くので、間合いは見ずに構える。
-    if (this._incomingAttack(foe) && this._isDuckable(foe) && rng.chance(cfg.guard)) {
-      // 溜めが 1 秒あるので、構えたら撃ち終わるまで下を押しっぱなしにする
-      this.plan = { bits: BTN.DOWN, ticks: 50 };
-      return BTN.DOWN;
+      // ガードは一番確実。ただしこれ一択にすると、崩し技を置かれて終わる
+      opts.push({ act: 'guard', bits: BTN.GUARD, ticks: 12, weight: cfg.guard * 5 });
+
+      // ビームのように高いところだけを薙ぐ攻撃は、しゃがめばくぐれる。
+      // ガード不能なので、くぐれるなら最優先
+      if (this._isDuckable(foe)) {
+        opts.push({ act: 'duck', bits: BTN.DOWN, ticks: 50, weight: cfg.guard * 14 });
+      }
+      // 判定が低いところに収まっているなら跳んで越える。
+      // ただし跳び上がるまでに判定が来ると、そのまま食らうだけになる
+      if (this._isJumpable(foe) && until >= JUMP_ESCAPE_FRAMES) {
+        opts.push({ act: 'jumpIn', bits: BTN.UP | toFoe, ticks: 8, weight: cfg.guard * 1.6 });
+        opts.push({ act: 'retreat', bits: BTN.UP | away, ticks: 8, weight: cfg.guard * 1 });
+      }
+      // 間合いの端で受けているなら、下がれば空振りにできる。
+      // これも下がり切る時間が要る
+      if (threat - dist < 70 && until >= RETREAT_ESCAPE_FRAMES) {
+        opts.push({ act: 'retreat', bits: away | BTN.DASH, ticks: 12, weight: cfg.spacing * 2.5 });
+      }
+      // 相手の発生より自分の発生が速いなら、割り込んだ方が勝つ
+      if (dist <= hitRange && until > prof.attack.startup + 3) {
+        opts.push({ act: 'attack', bits: BTN.ATTACK, ticks: 6, weight: cfg.punish * 2.5 });
+      }
+      return this._choose(rng, opts);
     }
 
-    // 2. 届く攻撃が来ているならガード。
-    //    届かない技には固めない（そのぶん差し込みに回す）。
-    if (this._incomingAttack(foe) && dist <= this._threatRange(foe) + 40 && rng.chance(cfg.guard)) {
-      this.plan = { bits: BTN.GUARD, ticks: 12 };
-      return BTN.GUARD;
-    }
-
-    // 3. 相手が手を出せない時間。ここだけは間合いを詰めてでも振る。
+    // ── 相手が手を出せない ────────────────────────────────
     const open = this._openFrames(foe);
-    if (open > 0 && rng.chance(cfg.punish)) {
-      // 届くなら振る。スキルは発生ぶんの猶予があるときだけ
-      if (dist <= skillRange && open >= prof.skill.startup + 4 && this.cooldown === 0) {
-        this.cooldown = 60;
-        this.plan = { bits: BTN.SKILL, ticks: 6 };
-        return BTN.SKILL;
-      }
+    if (open > 0) {
+      const opts = [];
       if (dist <= hitRange && open >= prof.attack.startup) {
-        this.plan = { bits: BTN.ATTACK, ticks: 6 };
-        return BTN.ATTACK;
+        opts.push({ act: 'attack', bits: BTN.ATTACK, ticks: 6, weight: cfg.punish * 5 });
       }
-      // 届かないなら走って詰める。硬直が明ける前に間合いへ入れたい
-      this.plan = { bits: toFoe | BTN.DASH, ticks: 8 };
-      return this.plan.bits;
+      if (dist <= skillRange && open >= prof.skill.startup + 4 && this.cooldown === 0) {
+        // 大技が確定で入る場面。一番おいしい
+        opts.push({
+          act: 'skill',
+          bits: BTN.SKILL,
+          ticks: 6,
+          weight: cfg.punish * 4,
+          cooldown: 60,
+        });
+      }
+      // 届かないなら詰める。硬直が明ける前に間合いへ入れたい
+      opts.push({ act: 'rush', bits: toFoe | BTN.DASH, ticks: 8, weight: dist > hitRange ? 4 : 0.8 });
+      opts.push({ act: 'jumpIn', bits: BTN.UP | toFoe, ticks: 8, weight: dist > hitRange * 1.4 ? 1 : 0.2 });
+      opts.push({ act: 'wait', bits: 0, ticks: cfg.react, weight: (1 - cfg.punish) * 3 });
+      return this._choose(rng, opts);
     }
 
-    // 4. スキル。ガードを崩せる代わりに発生が遅く、外すと大きな隙になるので、
-    //    「出し切るまでに殴られない」見込みがあるときだけ通す。通るのは 2 つ。
-    //      a) 相手がガードを固めている。打撃が通らないのでこれしかない
-    //      b) 相手がまだ動き出しておらず、実効射程の外寄りにいる
-    //         （出し切る前に踏み込まれない距離。剣士のタックルはここで使う）
-    //    確定で入る硬直への差し込みは、上の 3 で済んでいる。
+    // ── 通常の間合い争い ──────────────────────────────────
+    const opts = [];
+
+    // 届くなら振る
+    if (dist <= hitRange && !foe.invulnerable && this.cooldown === 0) {
+      opts.push({
+        act: 'attack',
+        bits: BTN.ATTACK,
+        ticks: 6,
+        weight: cfg.aggression * 3,
+        cooldown: ranged ? 12 : 20,
+      });
+    }
+    // スキルはガードを崩せる代わりに発生が遅く、外すと大きな隙になる。
+    // 固める相手か、出し切るまで踏み込まれない距離のときだけ。
     if (dist <= skillRange && this.cooldown === 0) {
-      const crushing = this._turtling(foe) && rng.chance(cfg.crush);
-      const spaced =
-        !this._incomingAttack(foe) &&
-        dist > hitRange * 0.7 &&
-        rng.chance(cfg.aggression * 0.35);
-      if (crushing || spaced) {
-        this.cooldown = prof.skill.startup > SLOW_STARTUP ? 150 : 70;
-        this.plan = { bits: BTN.SKILL, ticks: 6 };
-        return BTN.SKILL;
+      const slow = prof.skill.startup > SLOW_STARTUP;
+      if (this._turtling(foe)) {
+        // 打撃が通らないので、崩すならこれしかない
+        opts.push({
+          act: 'skill',
+          bits: BTN.SKILL,
+          ticks: 6,
+          weight: cfg.crush * 6,
+          cooldown: slow ? 90 : 60,
+        });
+      } else if (dist > hitRange * 0.7) {
+        opts.push({
+          act: 'skill',
+          bits: BTN.SKILL,
+          ticks: 6,
+          weight: cfg.aggression * (slow ? 0.5 : 1.2),
+          cooldown: slow ? 150 : 70,
+        });
       }
     }
-
-    // 5. 間合いに入っていれば振る（ダウン中の相手には当たらないので振らない）
-    if (dist <= hitRange && !foe.invulnerable && this.cooldown === 0 && rng.chance(cfg.aggression)) {
-      bits = BTN.ATTACK;
-      this.cooldown = ranged ? 12 : 20;
-      ticks = 6;
+    // 固める相手には、いったん離れて仕切り直すのも手。
+    // ただし下がりすぎると崩しの間合いから外れてしまうので、内側にいるときだけ。
+    if (this._turtling(foe) && dist < skillRange * 0.8) {
+      opts.push({ act: 'retreat', bits: away, ticks: 14, weight: cfg.spacing * 0.8 });
     }
-    // 6. 近すぎる。相手の間合いの内側で殴り合うのは割が悪いので離れる
-    else if (dist < hitRange * 0.45 && foe.isFree && rng.chance(cfg.spacing)) {
-      bits = away;
-      ticks = 14;
+    // 近すぎる。相手の間合いの内側で殴り合うのは割が悪い
+    if (dist < hitRange * 0.5 && foe.isFree) {
+      opts.push({ act: 'retreat', bits: away, ticks: 14, weight: cfg.spacing * 2.5 });
+      opts.push({ act: 'retreat', bits: away | BTN.DASH, ticks: 12, weight: cfg.spacing * 1.2 });
     }
-    // 7. 遠いので詰める。走りと飛び込みを混ぜる
-    else if (dist > idealRange) {
-      bits = toFoe;
-      if (rng.chance(cfg.dash)) bits |= BTN.DASH;
-      // 飛び込みは有効な間合いの詰め方なので、遠いときは混ぜる
-      else if (dist > 300 && rng.chance(0.16)) bits |= BTN.UP;
-      ticks = 12;
+    // 遠いので詰める。歩き・走り・飛び込みを混ぜる
+    if (dist > idealRange) {
+      opts.push({ act: 'walkIn', bits: toFoe, ticks: 12, weight: 2.5 });
+      opts.push({ act: 'rush', bits: toFoe | BTN.DASH, ticks: 10, weight: cfg.dash * 3 });
+      if (dist > 280) {
+        opts.push({ act: 'jumpIn', bits: BTN.UP | toFoe, ticks: 8, weight: cfg.aggression * 1.2 });
+      }
     }
-    // 8. 手持ち無沙汰。少し揺さぶる
-    else {
-      bits = rng.chance(0.5) ? toFoe : away;
-      ticks = 10;
+    // 自分の間合いの先端で待つ。相手が入ってきたら差し返せる
+    opts.push({ act: 'wait', bits: 0, ticks: 10, weight: cfg.spacing * 1.5 });
+    // 揺さぶり。前後に振って間合いを測る
+    opts.push({ act: 'walkIn', bits: toFoe, ticks: 8, weight: 0.8 });
+    opts.push({ act: 'retreat', bits: away, ticks: 8, weight: 0.8 });
+    if (ranged && dist < idealRange * 0.7) {
+      // 遠距離キャラは離れ続けたい
+      opts.push({ act: 'retreat', bits: away | BTN.DASH, ticks: 14, weight: 3 });
     }
-
-    this.plan = { bits, ticks };
-    return bits;
+    return this._choose(rng, opts);
   }
 }

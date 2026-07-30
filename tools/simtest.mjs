@@ -1251,25 +1251,28 @@ section('CPU の立ち回り');
     // 届かない間合いでは振らない
     const sim = newSim(['swordsman', 'swordsman']);
     place(sim, 200, 1000);
-    const seen = await observe(sim, 40);
+    const seen = await observe(sim, 120);
     check('届かない間合いでは技を振らない', (seen & (BTN.ATTACK | BTN.SKILL)) === 0,
       `bits=${seen}`);
     check('遠いときは間合いを詰めに行く', (seen & (BTN.LEFT | BTN.RIGHT)) !== 0);
   }
 
   {
-    // 走って詰める（2度押しの再現ではなく DASH ビットを使う）
+    // 走って詰める（2度押しの再現ではなく DASH ビットを使う）。
+    // 詰め方は歩き・走り・飛び込みを混ぜるので、何度か決め直す長さで見る。
     const sim = newSim(['swordsman', 'swordsman']);
     place(sim, 200, 1200);
-    const seen = await observe(sim, 90);
+    const seen = await observe(sim, 400);
     check('間合いを詰めるときは走る', (seen & BTN.DASH) !== 0, `bits=${seen}`);
+    check('詰め方は走りだけではない', (seen & (BTN.LEFT | BTN.RIGHT)) !== 0, `bits=${seen}`);
   }
 
   {
     // ガードを固める相手はスキルで崩しに来る（打撃は通らないため）
     const sim = newSim(['swordsman', 'berserker']);
     place(sim, 800, 950);
-    const seen = await observe(sim, 120, { foeBits: BTN.GUARD });
+    // 気分が数秒ごとに切り替わるので、複数の気分をまたぐ長さで見る
+    const seen = await observe(sim, 400, { foeBits: BTN.GUARD });
     check('固める相手にはスキルで崩しに来る', (seen & BTN.SKILL) !== 0, `bits=${seen}`);
   }
 
@@ -1278,7 +1281,7 @@ section('CPU の立ち回り');
     const sim = newSim(['berserker', 'berserker']);
     place(sim, 800, 990);
     const total = sim.fighters[0].def.moves[sim.fighters[0].def.attackMove].total;
-    const seen = await observe(sim, 200, { foeBits: (i) => (i % (total + 4) === 0 ? BTN.ATTACK : 0) });
+    const seen = await observe(sim, 400, { foeBits: (i) => (i % (total + 4) === 0 ? BTN.ATTACK : 0) });
     check('相手の空振りの戻りに技を差し込む', (seen & BTN.ATTACK) !== 0, `bits=${seen}`);
   }
 
@@ -1286,7 +1289,7 @@ section('CPU の立ち回り');
     // 密着では照射の溜めを始めない（溜め 1 秒がそのまま的になる）
     const sim = newSim(['swordsman', 'mage']);
     place(sim, 800, 880);
-    const seen = await observe(sim, 150);
+    const seen = await observe(sim, 400);
     check('密着では溜めの長いスキルを出さない', (seen & BTN.SKILL) === 0, `bits=${seen}`);
   }
 }
