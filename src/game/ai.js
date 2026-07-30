@@ -4,16 +4,129 @@
  * 出力は人間と同じ「入力ビットマスク」なので、シミュレーションから見ると
  * プレイヤーと区別がつかない。乱数は sim.rng を通しているため、
  * CPU 戦もリプレイ・ロールバックがそのまま成立する。
+ *
+ * ── 方針 ────────────────────────────────────────────────────
+ * 一発当たったら即死なので、**振るか振らないか**の判断がほぼ全部を決める。
+ * 手数を増やすより「当たる間合いでしか振らない」「相手の隙にだけ差し込む」
+ * を守るほうが強い。そこで
+ *
+ *   1. 技の間合いと発生を技データから割り出し、届く距離でしか振らない
+ *   2. 相手が手を出せない時間（空振りの戻り・着地・のけぞり・ガード硬直）を
+ *      見つけて、そこにだけ差し込む
+ *   3. 固められたらスキルで崩す。逆に自分が不利なら間合いを外す
+ *
+ * を土台にしている。難易度はこの判断をどれだけ拾えるかで変える。
  */
 import { BTN, STATE } from './constants.js';
-import { CROUCH_CLEAR_Y } from './fighter.js';
+import { CROUCH_CLEAR_Y, HURTBOX } from './fighter.js';
+import { isProjectile } from './projectiles.js';
 
-/** 難易度プリセット。反応の速さと手の出し方の荒さを変える。 */
+/**
+ * 難易度プリセット。
+ *
+ * `react` は決めた行動を維持するティック数（小さいほど反応が速い）。
+ * ほかは「その状況に気づいて対処する確率」。0 なら見逃し、1 なら必ず拾う。
+ */
 export const DIFFICULTY = {
-  easy: { react: 22, aggression: 0.35, guardChance: 0.3, skillChance: 0.06, dashChance: 0.1 },
-  normal: { react: 12, aggression: 0.55, guardChance: 0.55, skillChance: 0.12, dashChance: 0.25 },
-  hard: { react: 6, aggression: 0.75, guardChance: 0.8, skillChance: 0.2, dashChance: 0.4 },
+  easy: {
+    react: 20,
+    guard: 0.3,
+    punish: 0.18,
+    aggression: 0.4,
+    crush: 0.25,
+    dash: 0.1,
+    spacing: 0.25,
+  },
+  normal: {
+    react: 9,
+    guard: 0.62,
+    punish: 0.55,
+    aggression: 0.6,
+    crush: 0.6,
+    dash: 0.35,
+    spacing: 0.55,
+  },
+  hard: {
+    react: 3,
+    guard: 0.94,
+    punish: 0.92,
+    aggression: 0.8,
+    crush: 0.92,
+    dash: 0.7,
+    spacing: 0.9,
+  },
 };
+
+/** やられ判定の半幅。相手のこのぶんだけ、技は手前で当たり始める。 */
+const HURT_HALF = HURTBOX.w / 2;
+
+/** 飛び道具の技は画面の向こうまで届くものとして扱う。 */
+const PROJECTILE_REACH = 900;
+
+/** これより発生が遅い技は「振ったら戻れない大技」として扱う。 */
+const SLOW_STARTUP = 20;
+
+/** キャラ定義ごとの技の性能。技データから割り出したものを覚えておく。 */
+const PROFILES = new WeakMap();
+
+/**
+ * 技の間合い・発生・飛び道具かどうかを技データから割り出す。
+ *
+ * 数値を手で書くと技を調整したときに置いていかれるので、必ずデータから引く。
+ * 溜め技は自分では判定を持たず `onEnd` の先に本体があるので、
+ * 繋ぎ先まで辿り、発生フレームは前段の全体フレームを足して数える
+ * （魔法使いの照射なら「1秒の溜め＋本体の発生」が発生フレームになる）。
+ */
+export function profileOf(def) {
+  const cached = PROFILES.get(def);
+  if (cached) return cached;
+
+  const scan = (id) => {
+    let move = def.moves[id];
+    let reach = 0;
+    let travel = 0;
+    let startup = Infinity;
+    let projectile = false;
+    let offset = 0;
+    let total = 0;
+    for (let guard = 0; move && guard < 4; guard += 1) {
+      for (const h of move.hits) {
+        reach = Math.max(reach, h.box.x + h.box.w);
+        startup = Math.min(startup, offset + h.start);
+      }
+      // 踏み込む技は移動ぶんだけ遠くまで届く。
+      // 剣士のタックルは判定リーチ 142 でも、182 前進するので実際は 324 届く。
+      for (const m of move.motion) {
+        if ((m.vx ?? 0) > 0) travel += m.vx * (m.end - m.start + 1);
+      }
+      // 飛び道具は自分では判定を持たないので、発生は弾を撃つフレームで数える。
+      // spawns には演出も混ざる（照射の溜めが出す魔法陣など）ので、
+      // 実弾として定義されている type だけを見る。
+      // ここを取り違えると「溜め 1 秒の照射」を発生 0 の技だと思い込んで、
+      // 密着で溜め始めてそのまま的になる。
+      for (const sp of move.spawns) {
+        if (!isProjectile(sp.type)) continue;
+        projectile = true;
+        startup = Math.min(startup, offset + (sp.frame ?? 0));
+      }
+      offset += move.total;
+      total = offset;
+      move = move.onEnd ? def.moves[move.onEnd] : null;
+    }
+    if (projectile) reach = Math.max(reach, PROJECTILE_REACH);
+    return {
+      /** 判定が届く距離（相手のやられ判定ぶんを含む実効射程）。 */
+      range: reach + travel + HURT_HALF,
+      startup: Number.isFinite(startup) ? startup : total,
+      total,
+      projectile,
+    };
+  };
+
+  const profile = { attack: scan(def.attackMove), skill: scan(def.skillMove) };
+  PROFILES.set(def, profile);
+  return profile;
+}
 
 export class CpuController {
   /**
@@ -58,6 +171,28 @@ export class CpuController {
   }
 
   /**
+   * 今出てきている技が、この間合いの自分まで届くか。
+   *
+   * 判定ボックスの長さだけでは足りない。タックルのように踏み込む技は
+   * 移動ぶんだけ遠くまで届くので、判定が終わるまでの前進量も足して見る。
+   * 届かない技にガードを固めるのは、そのまま差し込む機会を捨てることになる。
+   */
+  _threatRange(opponent) {
+    const hits = this._upcomingHits(opponent);
+    if (hits.length === 0) return 0;
+    let move = opponent.currentMove();
+    let travel = 0;
+    for (let guard = 0; move && guard < 4; guard += 1) {
+      for (const m of move.motion) {
+        if ((m.vx ?? 0) > 0) travel += m.vx * (m.end - m.start + 1);
+      }
+      move = move.onEnd ? opponent.def.moves[move.onEnd] : null;
+    }
+    const reach = Math.max(...hits.map((h) => h.box.x + h.box.w));
+    return reach + travel + HURT_HALF;
+  }
+
+  /**
    * しゃがめば下をくぐれる攻撃か。
    * 判定がひとつでも低いところに出るなら、しゃがんでも当たるので false。
    * 魔法使いのビーム（地上から 107〜205 を薙ぐ）がこれに当たる。
@@ -69,6 +204,52 @@ export class CpuController {
     // 空中から撃たれていれば判定はさらに高いので、そのぶん下駄を履かせる
     const lift = opponent.y;
     return hits.every((h) => h.box.y + lift >= CROUCH_CLEAR_Y);
+  }
+
+  /**
+   * 相手が「今は手を出せない」状態か。ここに差し込むのが一番安い。
+   *
+   * 振り切ったあとの戻り・着地硬直・のけぞり・ガード硬直がそれ。
+   *
+   * 連携（キャンセル）の受付が開いている区間は、続けて振られる可能性が
+   * あるので隙とは見なさない。ここを隙として踏み込むと、繋がれた 2 段目に
+   * そのまま刺されて損をする（実測でも突っ込む相手に대して勝率が 10 ポイント落ちた）。
+   *
+   * @returns {number} 差し込める猶予フレーム。0 なら隙ではない。
+   */
+  _openFrames(opponent) {
+    if (opponent.invulnerable || opponent.isKO) return 0;
+
+    // のけぞり・ガード硬直・ガードを崩された直後
+    if (
+      opponent.state === STATE.HIT ||
+      opponent.state === STATE.BLOCK ||
+      opponent.state === STATE.GUARD_BREAK
+    ) {
+      return Math.max(0, opponent.stunTicks - opponent.stateTimer);
+    }
+    // 着地硬直
+    if (opponent.state === STATE.LAND) {
+      return Math.max(0, opponent.landLag - opponent.stateTimer);
+    }
+    // 技の戻り。判定を出し切っていて、繋ぎ先も連携受付も無い区間
+    if (opponent.state === STATE.MOVE) {
+      const move = opponent.currentMove();
+      if (!move || move.onEnd || move.hits.length === 0) return 0;
+      const last = Math.max(...move.hits.map((h) => h.end));
+      if (opponent.moveFrame <= last) return 0;
+      const chainOpen = move.chains.some(
+        (c) => opponent.moveFrame >= c.from - 2 && opponent.moveFrame <= c.to
+      );
+      if (chainOpen) return 0;
+      return move.total - opponent.moveFrame;
+    }
+    return 0;
+  }
+
+  /** 相手がガードを固めているか（崩しに行く価値がある状態か）。 */
+  _turtling(opponent) {
+    return opponent.guardHeld && (opponent.state === STATE.GUARD || opponent.state === STATE.BLOCK);
   }
 
   /**
@@ -90,22 +271,25 @@ export class CpuController {
     }
 
     const rng = sim.rng;
+    const cfg = this.cfg;
     const dist = Math.abs(foe.x - me.x);
     const toFoe = foe.x >= me.x ? BTN.RIGHT : BTN.LEFT;
     const away = foe.x >= me.x ? BTN.LEFT : BTN.RIGHT;
 
-    // 得意距離。遠距離キャラは離れて弾を撒く。
-    const ranged = me.def.id === 'mage';
-    const idealRange = ranged ? 430 : 150;
-    const strikeRange = ranged ? 620 : 175;
+    const prof = profileOf(me.def);
+    const hitRange = prof.attack.range;
+    const skillRange = prof.skill.range;
+    // 遠距離キャラは離れて弾を撒くのが仕事
+    const ranged = prof.attack.projectile;
+    const idealRange = ranged ? 430 : hitRange * 0.85;
 
-    // 0. 空中に居るときは空中技と2段ジャンプしか選べないので、先に分けて考える。
+    // 0. 空中では空中技と2段ジャンプしか選べないので、先に分けて考える。
     //    降り際（vy < 0）に振ると地上の相手に当たりやすい。
     if (me.airborne && me.state === STATE.JUMP) {
       let air = 0;
-      if (dist < 220 && me.vy < 0 && !foe.invulnerable && rng.chance(this.cfg.aggression)) {
-        air = rng.chance(this.cfg.skillChance * 2) ? BTN.SKILL : BTN.ATTACK;
-      } else if (me.airJumps > 0 && this._incomingAttack(foe) && rng.chance(this.cfg.guardChance)) {
+      if (dist < 220 && me.vy < 0 && !foe.invulnerable && rng.chance(cfg.aggression)) {
+        air = rng.chance(0.3) ? BTN.SKILL : BTN.ATTACK;
+      } else if (me.airJumps > 0 && this._incomingAttack(foe) && rng.chance(cfg.guard)) {
         // 一発が致命傷なので、跳び直して軌道をずらす
         air = BTN.UP;
       } else if (dist > 200) {
@@ -116,56 +300,81 @@ export class CpuController {
     }
 
     let bits = 0;
-    let ticks = this.cfg.react;
+    let ticks = cfg.react;
 
     // 1. ビームのように高いところだけを薙ぐ攻撃は、しゃがんでくぐる。
     //    ガードより先に見るのは、ビームがガード不能だから。
     //    ビームは画面端まで届くので、間合いは見ずに構える。
-    if (this._incomingAttack(foe) && this._isDuckable(foe) && rng.chance(this.cfg.guardChance)) {
+    if (this._incomingAttack(foe) && this._isDuckable(foe) && rng.chance(cfg.guard)) {
       // 溜めが 1 秒あるので、構えたら撃ち終わるまで下を押しっぱなしにする
       this.plan = { bits: BTN.DOWN, ticks: 50 };
       return BTN.DOWN;
     }
 
-    // 2. 相手の攻撃が来ているならガードを優先
-    if (this._incomingAttack(foe) && dist < 260 && rng.chance(this.cfg.guardChance)) {
-      bits = BTN.GUARD;
-      ticks = 14;
+    // 2. 届く攻撃が来ているならガード。
+    //    届かない技には固めない（そのぶん差し込みに回す）。
+    if (this._incomingAttack(foe) && dist <= this._threatRange(foe) + 40 && rng.chance(cfg.guard)) {
+      this.plan = { bits: BTN.GUARD, ticks: 12 };
+      return BTN.GUARD;
     }
-    // 3. 間合いに入っていれば攻撃（ダウン中の相手には当たらないので振らない）
-    else if (
-      dist < strikeRange &&
-      !foe.invulnerable &&
-      this.cooldown === 0 &&
-      rng.chance(this.cfg.aggression)
-    ) {
-      if (rng.chance(this.cfg.skillChance)) {
-        bits = BTN.SKILL;
-        this.cooldown = 90;
-      } else {
-        bits = BTN.ATTACK;
-        this.cooldown = ranged ? 10 : 24;
+
+    // 3. 相手が手を出せない時間。ここだけは間合いを詰めてでも振る。
+    const open = this._openFrames(foe);
+    if (open > 0 && rng.chance(cfg.punish)) {
+      // 届くなら振る。スキルは発生ぶんの猶予があるときだけ
+      if (dist <= skillRange && open >= prof.skill.startup + 4 && this.cooldown === 0) {
+        this.cooldown = 60;
+        this.plan = { bits: BTN.SKILL, ticks: 6 };
+        return BTN.SKILL;
       }
+      if (dist <= hitRange && open >= prof.attack.startup) {
+        this.plan = { bits: BTN.ATTACK, ticks: 6 };
+        return BTN.ATTACK;
+      }
+      // 届かないなら走って詰める。硬直が明ける前に間合いへ入れたい
+      this.plan = { bits: toFoe | BTN.DASH, ticks: 8 };
+      return this.plan.bits;
+    }
+
+    // 4. スキル。ガードを崩せる代わりに発生が遅く、外すと大きな隙になるので、
+    //    「出し切るまでに殴られない」見込みがあるときだけ通す。通るのは 2 つ。
+    //      a) 相手がガードを固めている。打撃が通らないのでこれしかない
+    //      b) 相手がまだ動き出しておらず、実効射程の外寄りにいる
+    //         （出し切る前に踏み込まれない距離。剣士のタックルはここで使う）
+    //    確定で入る硬直への差し込みは、上の 3 で済んでいる。
+    if (dist <= skillRange && this.cooldown === 0) {
+      const crushing = this._turtling(foe) && rng.chance(cfg.crush);
+      const spaced =
+        !this._incomingAttack(foe) &&
+        dist > hitRange * 0.7 &&
+        rng.chance(cfg.aggression * 0.35);
+      if (crushing || spaced) {
+        this.cooldown = prof.skill.startup > SLOW_STARTUP ? 150 : 70;
+        this.plan = { bits: BTN.SKILL, ticks: 6 };
+        return BTN.SKILL;
+      }
+    }
+
+    // 5. 間合いに入っていれば振る（ダウン中の相手には当たらないので振らない）
+    if (dist <= hitRange && !foe.invulnerable && this.cooldown === 0 && rng.chance(cfg.aggression)) {
+      bits = BTN.ATTACK;
+      this.cooldown = ranged ? 12 : 20;
       ticks = 6;
     }
-    // 4. 近すぎるので下がる（歩き後退は相手を向いたままになる）
-    else if (dist < idealRange * 0.55) {
+    // 6. 近すぎる。相手の間合いの内側で殴り合うのは割が悪いので離れる
+    else if (dist < hitRange * 0.45 && foe.isFree && rng.chance(cfg.spacing)) {
       bits = away;
-      ticks = 16;
+      ticks = 14;
     }
-    // 5. 遠いので詰める。たまにダッシュや飛び込みを混ぜる
+    // 7. 遠いので詰める。走りと飛び込みを混ぜる
     else if (dist > idealRange) {
       bits = toFoe;
-      if (rng.chance(this.cfg.dashChance)) {
-        // 2度押しでダッシュ扱いになるよう、1フレーム離してから入れ直す
-        this.plan = { bits: toFoe, ticks: 2 };
-        return 0;
-      }
+      if (rng.chance(cfg.dash)) bits |= BTN.DASH;
       // 飛び込みは有効な間合いの詰め方なので、遠いときは混ぜる
-      if (dist > 300 && rng.chance(0.16)) bits |= BTN.UP;
+      else if (dist > 300 && rng.chance(0.16)) bits |= BTN.UP;
       ticks = 12;
     }
-    // 6. 手持ち無沙汰。少し揺さぶる
+    // 8. 手持ち無沙汰。少し揺さぶる
     else {
       bits = rng.chance(0.5) ? toFoe : away;
       ticks = 10;

@@ -1192,5 +1192,104 @@ section('スワイプから入力ビットへの振り分け');
   check('攻撃エリアの真上は割り当てなし', im.touchBits[0] === 0 && latched() === 0);
 }
 
+// ── CPU の判断材料 ──────────────────────────────────────────
+// CPU は技の間合いと発生を技データから割り出して使う。数値を手で持たない
+// 代わりに、ここが狂うと「届かない間合いで振る」「密着で溜め技を出す」に直結する。
+section('CPU が技データから読む性能');
+{
+  const { profileOf, CpuController, DIFFICULTY } = await import('../src/game/ai.js');
+
+  const sword = profileOf(getCharacter('swordsman'));
+  const berserk = profileOf(getCharacter('berserker'));
+  const mage = profileOf(getCharacter('mage'));
+
+  // 踏み込む技は移動ぶんだけ遠くまで届く。判定リーチだけ見ると使えなくなる
+  check('剣士のタックルは前進ぶんを含めた射程になる', sword.skill.range > 300,
+    `range=${sword.skill.range}`);
+  // 横切りも少し踏み込む（30）が、タックルの 182 とは桁が違う。
+  // 射程が判定リーチ（205）＋やられ判定（38）＋わずかな踏み込みに収まっていること
+  check('踏み込みの小さい技は射程が伸びない', sword.attack.range < 290,
+    `range=${sword.attack.range}`);
+  check('タックルの射程は横切りよりはっきり長い', sword.skill.range > sword.attack.range + 60,
+    `${sword.skill.range} vs ${sword.attack.range}`);
+  check('剣士のタックルの発生は溜めを含む', sword.skill.startup === 33,
+    `startup=${sword.skill.startup}`);
+
+  // 魔法使いの照射は「溜め 1 秒 → 本体」。溜めが出す魔法陣は演出でしかないので、
+  // これを発生と取り違えると密着で溜め始めて的になる（実際にそうなっていた）
+  check('照射の発生は溜めぶん遅い（魔法陣を発生と誤読しない）', mage.skill.startup >= 60,
+    `startup=${mage.skill.startup}`);
+  check('ホーミング弾の発生は弾を撃つフレーム', mage.attack.startup === 11,
+    `startup=${mage.attack.startup}`);
+  check('飛び道具は遠くまで届く扱いになる', mage.attack.range > 900, `range=${mage.attack.range}`);
+  check('狂戦士の突きは前進しないので射程が短い', berserk.skill.range < sword.skill.range,
+    `${berserk.skill.range} < ${sword.skill.range}`);
+
+  check('難易度は easy / normal / hard の3段', Object.keys(DIFFICULTY).join(',') === 'easy,normal,hard');
+  check('難易度が上がるほど反応が速い',
+    DIFFICULTY.easy.react > DIFFICULTY.normal.react &&
+      DIFFICULTY.normal.react > DIFFICULTY.hard.react);
+  check('CpuController は既定で normal', new CpuController(1).cfg === DIFFICULTY.normal);
+}
+
+section('CPU の立ち回り');
+{
+  /** CPU を 1 体だけ動かして、n ティックの間に出た入力を集める。 */
+  const observe = async (sim, ticks, { level = 'hard', foeBits = 0 } = {}) => {
+    const { CpuController } = await import('../src/game/ai.js');
+    const cpu = new CpuController(1, level);
+    let seen = 0;
+    for (let i = 0; i < ticks; i += 1) {
+      const bits = cpu.think(sim);
+      seen |= bits;
+      sim.step([typeof foeBits === 'function' ? foeBits(i) : foeBits, bits]);
+    }
+    return seen;
+  };
+
+  {
+    // 届かない間合いでは振らない
+    const sim = newSim(['swordsman', 'swordsman']);
+    place(sim, 200, 1000);
+    const seen = await observe(sim, 40);
+    check('届かない間合いでは技を振らない', (seen & (BTN.ATTACK | BTN.SKILL)) === 0,
+      `bits=${seen}`);
+    check('遠いときは間合いを詰めに行く', (seen & (BTN.LEFT | BTN.RIGHT)) !== 0);
+  }
+
+  {
+    // 走って詰める（2度押しの再現ではなく DASH ビットを使う）
+    const sim = newSim(['swordsman', 'swordsman']);
+    place(sim, 200, 1200);
+    const seen = await observe(sim, 90);
+    check('間合いを詰めるときは走る', (seen & BTN.DASH) !== 0, `bits=${seen}`);
+  }
+
+  {
+    // ガードを固める相手はスキルで崩しに来る（打撃は通らないため）
+    const sim = newSim(['swordsman', 'berserker']);
+    place(sim, 800, 950);
+    const seen = await observe(sim, 120, { foeBits: BTN.GUARD });
+    check('固める相手にはスキルで崩しに来る', (seen & BTN.SKILL) !== 0, `bits=${seen}`);
+  }
+
+  {
+    // 空振りの戻りには差し込む。相手に長い技を繰り返し振らせる
+    const sim = newSim(['berserker', 'berserker']);
+    place(sim, 800, 990);
+    const total = sim.fighters[0].def.moves[sim.fighters[0].def.attackMove].total;
+    const seen = await observe(sim, 200, { foeBits: (i) => (i % (total + 4) === 0 ? BTN.ATTACK : 0) });
+    check('相手の空振りの戻りに技を差し込む', (seen & BTN.ATTACK) !== 0, `bits=${seen}`);
+  }
+
+  {
+    // 密着では照射の溜めを始めない（溜め 1 秒がそのまま的になる）
+    const sim = newSim(['swordsman', 'mage']);
+    place(sim, 800, 880);
+    const seen = await observe(sim, 150);
+    check('密着では溜めの長いスキルを出さない', (seen & BTN.SKILL) === 0, `bits=${seen}`);
+  }
+}
+
 console.log(`\n合計 ${passed + failed} 件: 成功 ${passed} / 失敗 ${failed}`);
 process.exit(failed === 0 ? 0 : 1);

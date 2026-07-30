@@ -210,7 +210,9 @@ function startMatch() {
 
   if (app.mode === 'cpu') {
     app.input.solo = true;
-    app.cpu = new CpuController(1, 'normal');
+    // 難易度は ai.js の DIFFICULTY にある easy / normal / hard から選ぶ。
+    // 手応えを出したいので hard を既定にしている。
+    app.cpu = new CpuController(1, 'hard');
     app.session = new LocalSession(app.sim, (sim) => app.cpu.think(sim));
   } else {
     // 2人対戦ではキー配列を左右で分ける
