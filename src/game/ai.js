@@ -19,7 +19,7 @@
  */
 import { BTN, STATE } from './constants.js';
 import { CROUCH_CLEAR_Y, HURTBOX } from './fighter.js';
-import { isProjectile } from './projectiles.js';
+import { getProjectileDef, isProjectile } from './projectiles.js';
 
 /**
  * 難易度プリセット。
@@ -80,6 +80,21 @@ const JUMP_CLEAR_Y = 170;
  */
 const JUMP_ESCAPE_FRAMES = 9;
 const RETREAT_ESCAPE_FRAMES = 7;
+
+/**
+ * 飛んできている弾に反応し始める残りフレーム（相対速度で見た到達時間）。
+ *
+ * 実測で決めた値。短くすると足は止まらないが受け損なう（14 で勝率 0%）。
+ * 長くしすぎると弾を見るたびに固まって近づけない（60 で 4%）。
+ * 34 が一番勝てた（20.7%）。
+ */
+const PROJECTILE_WATCH = 34;
+
+/**
+ * 危険が目前と見なす残りフレーム。前の判断を引きずるのをやめて考え直す。
+ * ガードの発生は 1F なので、これだけ残っていれば間に合う。
+ */
+const RETHINK_FRAMES = 12;
 
 /** 気分の持続（ティック）。数秒ごとに攻めっ気と守りっ気が入れ替わる。 */
 const MOOD_MIN = 90;
@@ -276,6 +291,41 @@ export class CpuController {
     return 0;
   }
 
+  /**
+   * 自分に向かって飛んできている相手の弾のうち、いちばん早く届くもの。
+   *
+   * 弾は撃った本人の状態と切り離して飛ぶので、技のモーションを見ている
+   * `_incomingAttack()` ではまったく見えない。ここを見ないと、
+   * CPU は弾に対して何もせず歩いて当たりに行く。
+   *
+   * @returns {{p: object, def: object, frames: number, fromBehind: boolean} | null}
+   */
+  _incomingProjectile(sim, me) {
+    let best = null;
+    const hurt = me.hurtBox();
+    const cy = hurt.y + hurt.h * 0.5;
+    for (const p of sim.projectiles) {
+      if (p.owner === this.index) continue;
+      const dx = me.x - p.x;
+      const dy = cy - p.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 0.001) continue;
+      // 到達時間は**相対速度**で見る。弾の速さだけで割ると、
+      // 弾に向かって走っているときに倍近く遅く見積もってしまい、
+      // 気づいたつもりで間に合わなくなる（実測でこれが被弾の主因だった）。
+      const closing = ((p.vx - me.vx) * dx + (p.vy - me.vy) * dy) / dist;
+      if (closing <= 0) continue; // 近づいていないものは見ない
+      const def = getProjectileDef(p.type);
+      const frames = dist / closing;
+      if (!best || frames < best.frames) {
+        // 背中側から来ている弾はガードできない（canBlockFrom が弾く）
+        const fromBehind = (p.x >= me.x ? 1 : -1) !== me.facing;
+        best = { p, def, frames, fromBehind };
+      }
+    }
+    return best;
+  }
+
   /** 相手がガードを固めているか（崩しに行く価値がある状態か）。 */
   _turtling(opponent) {
     return opponent.guardHeld && (opponent.state === STATE.GUARD || opponent.state === STATE.BLOCK);
@@ -307,6 +357,23 @@ export class CpuController {
       scan = scan.onEnd ? opponent.def.moves[scan.onEnd] : null;
     }
     return 0;
+  }
+
+  /**
+   * 決めた行動を途中で打ち切って考え直すべきか。
+   *
+   * すでに守りの手（ガード・ジャンプ）を選んでいるなら、そのまま続ける。
+   * まだ何も守っていないのに危険が目前なら、考え直す方がよい。
+   */
+  _mustRethink(sim, me, foe) {
+    const defending = (this.plan.bits & (BTN.GUARD | BTN.UP | BTN.DOWN)) !== 0;
+    if (defending) return false;
+    const shot = this._incomingProjectile(sim, me);
+    if (shot && shot.frames <= RETHINK_FRAMES) return true;
+    if (this._incomingAttack(foe) && this._framesUntilHit(foe) <= RETHINK_FRAMES) {
+      return Math.abs(foe.x - me.x) <= this._threatRange(foe) + 40;
+    }
+    return false;
   }
 
   /**
@@ -381,7 +448,9 @@ export class CpuController {
 
     // 決めた行動は数ティック維持する。毎フレーム考え直すと
     // 入力が細切れになってダッシュもガードも成立しないため。
-    if (this.plan.ticks > 0) {
+    // ただし危険が目前に迫ったら打ち切って考え直す。ここが無いと、
+    // 走って詰めている最中に弾が届いて、そのまま当たるだけになる。
+    if (this.plan.ticks > 0 && !this._mustRethink(sim, me, foe)) {
       this.plan.ticks -= 1;
       return this.plan.bits;
     }
@@ -391,6 +460,26 @@ export class CpuController {
     const dist = Math.abs(foe.x - me.x);
     const toFoe = foe.x >= me.x ? BTN.RIGHT : BTN.LEFT;
     const away = foe.x >= me.x ? BTN.LEFT : BTN.RIGHT;
+
+    /**
+     * 跳んでよい状況かを一度だけ決める。空中はガードできないので、
+     * 跳ぶかどうかは弾の有無で意味が大きく変わる。
+     *
+     * - 相手の弾が場に出ているなら跳ばない。追尾するので跳んだ先で届く
+     * - **飛び道具を持つ相手が自由に動けるなら跳ばない。** 跳んでいる時間
+     *   （自分の身長ぶんの滞空 ≒ 50 フレーム超）は、弾の発生 11 フレームに対して
+     *   ただの的でしかない。実測では、跳んで弾を食らった 36 回のうち 35 回が
+     *   「跳んだ時点では弾が無かった」＝空中で撃たれたケースだった
+     *
+     * 飛び道具持ちに近づく手段は、跳ぶことではなく走って詰めることになる。
+     */
+    const foeShotAlive = sim.projectiles.some((p) => p.owner !== this.index);
+    const foeRanged = profileOf(foe.def).attack.projectile;
+    const jumpW = (w) => {
+      if (foeShotAlive) return 0;
+      if (foeRanged && foe.isFree) return w * 0.12;
+      return w;
+    };
 
     const prof = profileOf(me.def);
     const hitRange = prof.attack.range;
@@ -410,13 +499,38 @@ export class CpuController {
         opts.push({ act: 'skill', bits: BTN.SKILL, ticks: 5, weight: cfg.aggression });
       }
       if (me.airJumps > 0) {
-        // 一発が致命傷なので、跳び直して軌道をずらす。危ないときは特に
-        const danger = this._incomingAttack(foe) ? 3 : 0.6;
+        // 一発が致命傷なので、跳び直して軌道をずらす。危ないときは特に。
+        // 空中はガードできないので、弾が来ているならこれが唯一の答えになる
+        const shot = this._incomingProjectile(sim, me);
+        const danger = this._incomingAttack(foe) || (shot && shot.frames <= PROJECTILE_WATCH) ? 3 : 0.6;
         opts.push({ act: 'jumpIn', bits: BTN.UP | toFoe, ticks: 5, weight: cfg.guard * danger });
         opts.push({ act: 'retreat', bits: BTN.UP | away, ticks: 5, weight: cfg.guard * danger * 0.6 });
       }
       opts.push({ act: 'rush', bits: toFoe, ticks: 5, weight: dist > 200 ? 2 : 0.5 });
       opts.push({ act: 'wait', bits: 0, ticks: 5, weight: 0.6 });
+      return this._choose(rng, opts);
+    }
+
+    // ── 弾が飛んできている ────────────────────────────────
+    // 弾は撃った本人と切り離して飛ぶので、技のモーションを見ているだけでは
+    // 気づけない。相手の技より先に見るのは、弾のほうが先に届くから。
+    const shot = this._incomingProjectile(sim, me);
+    if (shot && shot.frames <= PROJECTILE_WATCH) {
+      const opts = [];
+      // 弾に対する答えはガード。弾は guardBreak を持たないので確実に止まる。
+      //
+      // 跳んで避けるのは**逆効果**だった。魔法使いの弾は杖の先（足元から 248）
+      // から出て追尾しながら降りてくるので、跳ぶと弾の高さへ自分から入る。
+      // しかも空中はガードできないので、外したらそのまま食らう。
+      // しゃがみも効かない（弾はしゃがんだぶん狙いを下げ直してくる）。
+      if (!shot.fromBehind) {
+        opts.push({ act: 'guard', bits: BTN.GUARD, ticks: 14, weight: cfg.guard * 8 });
+      } else {
+        // 背中側へ回り込まれた弾だけは受けられないので、跳んで軌道をずらす
+        opts.push({ act: 'jumpIn', bits: BTN.UP | toFoe, ticks: 8, weight: cfg.guard * 4 });
+        opts.push({ act: 'retreat', bits: away | BTN.DASH, ticks: 10, weight: cfg.guard * 2 });
+      }
+      opts.push({ act: 'wait', bits: 0, ticks: 6, weight: (1 - cfg.guard) * 2 });
       return this._choose(rng, opts);
     }
 
@@ -439,8 +553,8 @@ export class CpuController {
       // 判定が低いところに収まっているなら跳んで越える。
       // ただし跳び上がるまでに判定が来ると、そのまま食らうだけになる
       if (this._isJumpable(foe) && until >= JUMP_ESCAPE_FRAMES) {
-        opts.push({ act: 'jumpIn', bits: BTN.UP | toFoe, ticks: 8, weight: cfg.guard * 1.6 });
-        opts.push({ act: 'retreat', bits: BTN.UP | away, ticks: 8, weight: cfg.guard * 1 });
+        opts.push({ act: 'jumpIn', bits: BTN.UP | toFoe, ticks: 8, weight: jumpW(cfg.guard * 1.6) });
+        opts.push({ act: 'retreat', bits: BTN.UP | away, ticks: 8, weight: jumpW(cfg.guard * 1) });
       }
       // 間合いの端で受けているなら、下がれば空振りにできる。
       // これも下がり切る時間が要る
@@ -473,7 +587,12 @@ export class CpuController {
       }
       // 届かないなら詰める。硬直が明ける前に間合いへ入れたい
       opts.push({ act: 'rush', bits: toFoe | BTN.DASH, ticks: 8, weight: dist > hitRange ? 4 : 0.8 });
-      opts.push({ act: 'jumpIn', bits: BTN.UP | toFoe, ticks: 8, weight: dist > hitRange * 1.4 ? 1 : 0.2 });
+      opts.push({
+        act: 'jumpIn',
+        bits: BTN.UP | toFoe,
+        ticks: 8,
+        weight: jumpW(dist > hitRange * 1.4 ? 1 : 0.2),
+      });
       opts.push({ act: 'wait', bits: 0, ticks: cfg.react, weight: (1 - cfg.punish) * 3 });
       return this._choose(rng, opts);
     }
@@ -524,12 +643,25 @@ export class CpuController {
       opts.push({ act: 'retreat', bits: away, ticks: 14, weight: cfg.spacing * 2.5 });
       opts.push({ act: 'retreat', bits: away | BTN.DASH, ticks: 12, weight: cfg.spacing * 1.2 });
     }
-    // 遠いので詰める。歩き・走り・飛び込みを混ぜる
+    // 遠いので詰める。歩き・走り・飛び込みを混ぜる。
+    // ただし相手が下がり続けているなら歩いて追っても追いつけないので、
+    // 走りと飛び込みに寄せる（離れて弾を撒く相手に対してこれが要る）。
     if (dist > idealRange) {
-      opts.push({ act: 'walkIn', bits: toFoe, ticks: 12, weight: 2.5 });
-      opts.push({ act: 'rush', bits: toFoe | BTN.DASH, ticks: 10, weight: cfg.dash * 3 });
+      const fleeing = foe.vx !== 0 && Math.sign(foe.x - me.x) === Math.sign(foe.vx);
+      opts.push({ act: 'walkIn', bits: toFoe, ticks: 12, weight: fleeing ? 0.5 : 2.5 });
+      opts.push({
+        act: 'rush',
+        bits: toFoe | BTN.DASH,
+        ticks: 10,
+        weight: cfg.dash * (fleeing ? 6 : 3),
+      });
       if (dist > 280) {
-        opts.push({ act: 'jumpIn', bits: BTN.UP | toFoe, ticks: 8, weight: cfg.aggression * 1.2 });
+        opts.push({
+          act: 'jumpIn',
+          bits: BTN.UP | toFoe,
+          ticks: 8,
+          weight: jumpW(cfg.aggression * (fleeing ? 3 : 1.2)),
+        });
       }
     }
     // 自分の間合いの先端で待つ。相手が入ってきたら差し返せる

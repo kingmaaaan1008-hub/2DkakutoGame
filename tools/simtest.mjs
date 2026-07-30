@@ -1294,5 +1294,76 @@ section('CPU の立ち回り');
   }
 }
 
+// 飛び道具は撃った本人と切り離して飛ぶので、技のモーションを見ているだけでは
+// 気づけない。ここを見落とすと、CPU は弾に向かって歩いて当たりに行く。
+section('CPU の飛び道具への対応');
+{
+  const { CpuController } = await import('../src/game/ai.js');
+
+  /** 魔法使いに弾を撃たせて、CPU（剣士）がどう捌くかを見る。 */
+  const zone = async (ticks) => {
+    const sim = newSim(['mage', 'swordsman']);
+    place(sim, 1300, 700);
+    const cpu = new CpuController(1, 'hard');
+    const me = sim.fighters[1];
+    let guardedShot = 0;
+    let hitByShot = 0;
+    let airborneWithShot = 0;
+    for (let i = 0; i < ticks; i += 1) {
+      const before = sim.projectiles.length;
+      const hp = me.health;
+      const boltAlive = sim.projectiles.some((p) => p.owner === 0);
+      // 魔法使いは間合いを保ちつつ撃ち続ける
+      const foeBits = i % 34 === 0 ? BTN.ATTACK : BTN.LEFT;
+      sim.step([foeBits, cpu.think(sim)]);
+      if (boltAlive && me.airborne) airborneWithShot += 1;
+      if (sim.projectiles.length < before) {
+        if (me.state === STATE.BLOCK) guardedShot += 1;
+        else if (me.health < hp) hitByShot += 1;
+      }
+      if (me.health === 0) {
+        me.health = 1000; // 続けて観測したいので生かす
+        me.doomed = false;
+      }
+    }
+    return { guardedShot, hitByShot, airborneWithShot };
+  };
+
+  const r = await zone(900);
+  check('飛んできた弾をガードする', r.guardedShot > 0,
+    `ガード=${r.guardedShot} 被弾=${r.hitByShot}`);
+  check('弾に当たるより受ける方が多い', r.guardedShot > r.hitByShot,
+    `ガード=${r.guardedShot} 被弾=${r.hitByShot}`);
+  // 空中はガードできないので、弾が出ている間に跳んでいると受ける手が無くなる
+  check('相手の弾が出ている間はほとんど空中に居ない', r.airborneWithShot < 40,
+    `空中フレーム=${r.airborneWithShot}`);
+}
+
+{
+  // 到達時間は相対速度で見る。弾に向かって走っているぶんを勘定しないと、
+  // 「気づいたつもりで間に合わない」が起きる（実測で被弾の主因だった）
+  const { CpuController } = await import('../src/game/ai.js');
+  const sim = newSim(['mage', 'swordsman']);
+  place(sim, 1300, 700);
+  const cpu = new CpuController(1, 'hard');
+  run(sim, 1, BTN.ATTACK); // 弾を撃たせる
+  for (let i = 0; i < 20 && sim.projectiles.length === 0; i += 1) run(sim, 1, 0);
+  check('弾が出ている', sim.projectiles.length > 0);
+
+  const me = sim.fighters[1];
+  me.vx = 0;
+  const still = cpu._incomingProjectile(sim, me);
+  me.vx = 6.9; // 弾へ向かって走っている状態
+  const running = cpu._incomingProjectile(sim, me);
+  check('弾へ向かって走っていると到達が早いと見積もる',
+    running && still && running.frames < still.frames,
+    `止=${still?.frames.toFixed(1)} 走=${running?.frames.toFixed(1)}`);
+
+  me.vx = 0;
+  me.x = sim.projectiles[0].x - 300; // 弾の手前（弾は右へ飛んでいる想定）
+  const away = cpu._incomingProjectile(sim, me);
+  check('通り過ぎた弾には反応しない', away === null || away.frames > 0);
+}
+
 console.log(`\n合計 ${passed + failed} 件: 成功 ${passed} / 失敗 ${failed}`);
 process.exit(failed === 0 ? 0 : 1);
