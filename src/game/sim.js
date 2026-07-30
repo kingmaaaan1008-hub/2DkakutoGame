@@ -234,6 +234,13 @@ export class Simulation {
        * 走り抜ける間に何度も当たらないようにするため。
        */
       spent: false,
+      /**
+       * 突進に入ってからの経過フレーム。まだなら -1。
+       * 描画側はこれを見て突進の絵を**頭から 1 回だけ**再生する。
+       * 相手との距離からコマを決めると、追い越したあとに距離が開いて
+       * コマが逆戻りし、2 周したように見えてしまう。
+       */
+      lungeAge: -1,
     });
   }
 
@@ -255,6 +262,13 @@ export class Simulation {
       const p = this.projectiles[i];
       const def = getProjectileDef(p.type);
       const target = this.fighters[1 - p.owner];
+
+      // 突進に入る間合いに届いたら、そこからのフレーム数を数え始める。
+      // 一度入ったら戻さない（離れても突進の絵を巻き戻さないため）。
+      if (def.tackleRange > 0) {
+        if (p.lungeAge < 0 && Math.abs(target.x - p.x) <= def.tackleRange) p.lungeAge = 0;
+        else if (p.lungeAge >= 0) p.lungeAge += 1;
+      }
 
       if (def.turnRate > 0 && !target.isKO) {
         // 胴体の中心あたりを狙う。しゃがまれたらそのぶん低く狙い直す

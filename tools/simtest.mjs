@@ -808,6 +808,39 @@ section('女子高生');
   check('切り替えは判定が届く手前で起きる', bf.tackleRange > bf.box.w / 2,
     `range=${bf.tackleRange} 判定幅の半分=${bf.box.w / 2}`);
   check('走りと突進の両方の絵を持つ', !!bf.anims.run && !!bf.anims.hit);
+  // 突進のシートは 1 回ぶんの動き。出し切る時間が、突進の間合いを詰める
+  // 時間とだいたい合っていないと、ぶつかる前後で絵が足りない／余る
+  const crossFrames = bf.tackleRange / bf.speed;
+  const playFrames = (8 * 60) / bf.tackleFps; // 8 コマ
+  check('突進を出し切る時間が間合いを詰める時間と釣り合う',
+    playFrames > crossFrames && playFrames < crossFrames * 1.6,
+    `出し切り=${playFrames.toFixed(0)}F 詰め=${crossFrames.toFixed(0)}F`);
+}
+
+{
+  // 突進の絵は**頭から 1 回だけ**再生する。
+  // 相手との距離からコマを決めると、追い越したあとに距離が開いて
+  // コマが逆戻りし、2 周したように見えてしまう。
+  const sim = newSim(['schoolgirl', 'swordsman']);
+  place(sim, 400, 1100);
+  run(sim, 1, BTN.SKILL);
+  for (let i = 0; i < 25 && sim.projectiles.length === 0; i += 1) run(sim, 1, 0);
+  const bf = sim.projectiles.find((p) => p.type === 'boyfriend');
+  check('走っている間は突進を数え始めない', bf?.lungeAge === -1, `lungeAge=${bf?.lungeAge}`);
+
+  const ages = [];
+  for (let i = 0; i < 200; i += 1) {
+    run(sim, 1, 0);
+    const cur = sim.projectiles.find((p) => p.type === 'boyfriend');
+    if (cur && cur.lungeAge >= 0) ages.push(cur.lungeAge);
+  }
+  check('突進に入ったら数え始める', ages.length > 0);
+  let monotone = true;
+  for (let i = 1; i < ages.length; i += 1) if (ages[i] <= ages[i - 1]) monotone = false;
+  check('追い越しても突進のコマが巻き戻らない', monotone,
+    `並び=${ages.slice(0, 6).join(',')}…`);
+  check('突進を出し切るだけ数えている', ages[ages.length - 1] >= 22,
+    `最終=${ages[ages.length - 1]}`);
 }
 
 // ── 空中攻撃 ────────────────────────────────────────────────

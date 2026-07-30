@@ -302,25 +302,31 @@ export class Renderer {
   /**
    * スプライトで描く飛び道具（女子高生の彼氏）。
    *
-   * 走ってきて、相手に届きそうになったらタックルの構えに変わる。
-   * 切り替えを経過フレームではなく**相手との距離**で決めているので、
-   * どこで呼んでも「走ってきて、届く直前に跳び込む」形になる。
-   * タックルのコマも距離で進めるため、詰めるほど跳び込みが深くなる。
+   * 走ってきて、相手に届く間合いに入ったらタックルの絵に変わり、
+   * 出し切ったらまた走りに戻って走り抜けていく。
+   *
+   * **タックルは繰り返さない。** 突進のシートは 1 回ぶんの動きなので、
+   * 突進に入ってからの経過フレーム（sim が数えている lungeAge）で
+   * 頭から 1 回だけ再生する。相手との距離でコマを決めると、
+   * 追い越したあとに距離が開いてコマが逆戻りし、2 周したように見えてしまう。
    */
   _drawSpriteProjectile(p, def, sim) {
     const sprite = this.sprites[def.sheet];
     if (!sprite) return;
     const cam = this.cam;
-    const target = sim?.fighters?.[1 - p.owner];
-    const gap = target ? Math.abs(target.x - p.x) : Infinity;
-    const range = def.tackleRange ?? 0;
-    const lunging = range > 0 && gap <= range;
+    const tackle = sprite.animations[def.anims.hit];
+    const tackleFrame =
+      p.lungeAge >= 0 && tackle
+        ? Math.floor((p.lungeAge * (def.tackleFps ?? def.animFps ?? 14)) / 60)
+        : -1;
+    // 出し切ったら走りに戻る（そのまま走り抜けていく）
+    const lunging = tackleFrame >= 0 && tackleFrame < (tackle?.frames ?? 0);
 
     const animName = lunging ? def.anims.hit : def.anims.run;
     const cell = sprite.animations[animName];
     if (!cell) return;
     const index = lunging
-      ? Math.min(cell.frames - 1, Math.floor((1 - gap / range) * cell.frames))
+      ? tackleFrame
       : Math.floor((p.age * (def.animFps ?? 14)) / 60) % cell.frames;
     drawStillFrame(
       this.ctx,

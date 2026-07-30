@@ -138,6 +138,12 @@ export const PROJECTILES = {
      */
     tackleRange: 190,
     animFps: 16,
+    /**
+     * 突進の再生速度。8 コマを 22fps ＝ 約 22 フレームで出し切る。
+     * 突進の間合い（190）を速度 11.5 で詰めるのに約 17 フレームなので、
+     * ぶつかる頃には跳び込み切っている。
+     */
+    tackleFps: 22,
     damage: 150,
     hitstun: 34,
     blockstun: 16,
