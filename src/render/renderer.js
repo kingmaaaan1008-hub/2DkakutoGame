@@ -7,7 +7,7 @@
 import { STAGE_WIDTH, STATE } from '../game/constants.js';
 import { toWorldBox } from '../game/moves.js';
 import { getProjectileDef } from '../game/projectiles.js';
-import { drawFighterSprite } from './spritebank.js';
+import { drawFighterSprite, drawStillFrame } from './spritebank.js';
 import { drawStage } from './stage.js';
 
 /** 地面から画面上端までに見えるワールド単位。キャラの画面占有率を決める。 */
@@ -255,6 +255,14 @@ export class Renderer {
 
   _drawProjectile(p) {
     const def = getProjectileDef(p.type);
+    if (def.style === 'sprite') {
+      this._drawSpriteProjectile(p, def);
+      return;
+    }
+    if (def.style === 'beam') {
+      this._drawLaser(p, def);
+      return;
+    }
     const cam = this.cam;
     const ctx = this.ctx;
     const sx = cam.toScreenX(p.x);
@@ -282,6 +290,86 @@ export class Renderer {
     ctx.moveTo(sx, sy);
     ctx.lineTo(sx - p.vx * 2.6 * cam.zoom, sy + p.vy * 2.6 * cam.zoom);
     ctx.stroke();
+    ctx.restore();
+  }
+
+  /**
+   * スプライトで描く飛び道具（女子高生の彼氏）。
+   * 走り込んできて、当たる間際にタックルの絵へ切り替える。
+   */
+  _drawSpriteProjectile(p, def) {
+    const sprite = this.sprites[def.sheet];
+    if (!sprite) return;
+    const cam = this.cam;
+    // 走り込みが終わったらタックルの絵に切り替える
+    const animName = p.age >= (def.runFrames ?? 0) ? def.anims.hit : def.anims.run;
+    const cell = sprite.animations[animName];
+    if (!cell) return;
+    const index = Math.floor((p.age * (def.animFps ?? 14)) / 60) % cell.frames;
+    drawStillFrame(
+      this.ctx,
+      sprite,
+      animName,
+      index,
+      cam.toScreenX(p.x),
+      cam.toScreenY(p.y),
+      cam.zoom,
+      p.facing
+    );
+  }
+
+  /**
+   * スマホカメラのレーザー。
+   *
+   * 判定は細長い箱だが、そのまま塗ると板にしか見えないので
+   *   1. 上下を減衰させた薄い光（外側）
+   *   2. 白い芯（中央）
+   *   3. 進行方向の先端だけ強く光らせる
+   * の 3 枚で光条に見せている。
+   */
+  _drawLaser(p, def) {
+    const cam = this.cam;
+    const ctx = this.ctx;
+    const sx = cam.toScreenX(p.x);
+    const sy = cam.toScreenY(p.y);
+    const halfW = ((def.box?.w ?? def.radius * 2) / 2) * cam.zoom;
+    const halfH = ((def.box?.h ?? def.radius * 2) / 2) * cam.zoom;
+    // 撃った直後は短い。伸びきってから一定になる
+    const grow = Math.min(1, (p.age + 1) / 5);
+    const w = halfW * grow;
+    const dir = p.facing >= 0 ? 1 : -1;
+
+    ctx.save();
+    ctx.translate(sx, sy);
+
+    // 外側の光。上下は減衰させて、輪郭を出さない
+    const soft = ctx.createLinearGradient(0, -halfH * 1.5, 0, halfH * 1.5);
+    soft.addColorStop(0, 'rgba(255,111,208,0)');
+    soft.addColorStop(0.5, def.color);
+    soft.addColorStop(1, 'rgba(255,111,208,0)');
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = soft;
+    ctx.fillRect(-w, -halfH * 1.5, w * 2, halfH * 3);
+
+    // 芯。後ろへ細く尾を引く
+    const core = ctx.createLinearGradient(-w * dir, 0, w * dir, 0);
+    core.addColorStop(0, 'rgba(255,255,255,0)');
+    core.addColorStop(0.45, 'rgba(255,255,255,0.85)');
+    core.addColorStop(1, '#ffffff');
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = core;
+    ctx.fillRect(-w, -halfH * 0.3, w * 2, halfH * 0.6);
+
+    // 先端の光点
+    const tipX = w * dir;
+    const tip = ctx.createRadialGradient(tipX, 0, 0, tipX, 0, halfH * 1.6);
+    tip.addColorStop(0, 'rgba(255,255,255,0.95)');
+    tip.addColorStop(0.5, def.color);
+    tip.addColorStop(1, 'rgba(255,111,208,0)');
+    ctx.fillStyle = tip;
+    ctx.beginPath();
+    ctx.arc(tipX, 0, halfH * 1.6, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   }
 

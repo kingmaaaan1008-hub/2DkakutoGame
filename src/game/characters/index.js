@@ -8,8 +8,16 @@
 import swordsman from './swordsman.js';
 import berserker from './berserker.js';
 import mage from './mage.js';
+import schoolgirl from './schoolgirl.js';
 
-export const ROSTER = [swordsman, berserker, mage];
+export const ROSTER = [swordsman, berserker, mage, schoolgirl];
+
+/**
+ * キャラではないが読み込みが要るスプライト。
+ * 女子高生のスキルで走ってくる彼氏は、プレイヤーが選ぶ相手ではないので
+ * ROSTER には入れず、描画用のアトラスだけ用意する。
+ */
+export const EXTRA_SPRITE_IDS = ['boyfriend'];
 
 /** id → キャラ定義 */
 export const CHARACTERS = Object.fromEntries(ROSTER.map((c) => [c.id, c]));

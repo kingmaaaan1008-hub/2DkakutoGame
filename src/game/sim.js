@@ -266,7 +266,17 @@ export class Simulation {
 
       // ダウン中の相手は弾もすり抜ける（消えずに通過する）
       if (!remove && !target.isKO && !target.invulnerable && target.hitstop === 0) {
-        const box = { x: p.x - def.radius, y: p.y - def.radius, w: def.radius * 2, h: def.radius * 2 };
+        // 既定は radius の正方形。box を持つものはその寸法で当てる
+        // （レーザーのように細長いもの、彼氏のように人ひとりぶんのもの用）。
+        // box.y は箱の下端を p.y からどれだけ上に置くか。省略すると中央になる。
+        const box = def.box
+          ? {
+              x: p.x - def.box.w / 2,
+              y: p.y + (def.box.y ?? -def.box.h / 2),
+              w: def.box.w,
+              h: def.box.h,
+            }
+          : { x: p.x - def.radius, y: p.y - def.radius, w: def.radius * 2, h: def.radius * 2 };
         if (boxesOverlap(box, target.hurtBox())) {
           target.receiveHit(def, p.x, p.facing, this.fighters[p.owner], this);
           if (def.destroyOnHit) remove = true;

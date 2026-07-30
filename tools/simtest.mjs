@@ -627,6 +627,112 @@ section('しゃがみ');
     `foe.move=${foe.moveId} me.state=${me.state}`);
 }
 
+// ── 女子高生 ────────────────────────────────────────────────
+// 自分の技には打撃判定がひとつも無く、当てるのはレーザーと彼氏だけ。
+// 「技を出す」と「当たる」が離れているのが特徴なので、そこを確かめる。
+section('女子高生');
+{
+  const sim = newSim(['schoolgirl', 'swordsman']);
+  place(sim, 500, 1100);
+  const [p1, p2] = sim.fighters;
+
+  run(sim, 1, BTN.ATTACK);
+  check('攻撃でカメラを構える', p1.moveId === 'photoLaser', `move=${p1.moveId}`);
+  check('構えた時点では判定を持たない', p1.def.moves.photoLaser.hits.length === 0);
+
+  for (let i = 0; i < 30 && sim.projectiles.length === 0; i += 1) run(sim, 1, 0);
+  const laser = sim.projectiles[0];
+  check('スマホからレーザーが出る', laser?.type === 'laser', `proj=${laser?.type}`);
+  check('レーザーは真っ直ぐ前へ飛ぶ', laser.vx > 0 && laser.vy === 0,
+    `vx=${laser?.vx.toFixed(1)} vy=${laser?.vy.toFixed(1)}`);
+
+  const y0 = laser.y;
+  run(sim, 10, 0);
+  const still = sim.projectiles[0];
+  check('飛んでいる間も高さが変わらない（追尾しない）', !still || still.y === y0,
+    `y ${y0} -> ${still?.y}`);
+
+  for (let i = 0; i < 90 && p2.health > 0; i += 1) run(sim, 1, 0);
+  check('レーザーが相手に当たる', p2.health === 0, `hp=${p2.health}`);
+}
+
+{
+  // レーザーはしゃがめばくぐれる高さに置いてある（スマホを構えた高さ）
+  const sim = newSim(['schoolgirl', 'swordsman']);
+  place(sim, 500, 900);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.ATTACK);
+  // 沈み切ってから通す
+  run(sim, CROUCH_TICKS + 2, 0, BTN.DOWN);
+  for (let i = 0; i < 90 && sim.projectiles.length > 0; i += 1) run(sim, 1, 0, BTN.DOWN);
+  check('しゃがめばレーザーをくぐれる', p2.health > 0, `hp=${p2.health}`);
+}
+
+{
+  // スキルは指をさすだけ。当てるのは後ろから走ってくる彼氏
+  const sim = newSim(['schoolgirl', 'swordsman']);
+  place(sim, 500, 1100);
+  const [p1, p2] = sim.fighters;
+
+  run(sim, 1, BTN.SKILL);
+  check('スキルで指をさす', p1.moveId === 'callBoyfriend', `move=${p1.moveId}`);
+  check('指さし自体は判定を持たない', p1.def.moves.callBoyfriend.hits.length === 0);
+
+  for (let i = 0; i < 30 && sim.projectiles.length === 0; i += 1) run(sim, 1, 0);
+  const bf = sim.projectiles[0];
+  check('彼氏が出てくる', bf?.type === 'boyfriend', `proj=${bf?.type}`);
+  check('彼氏は女子高生の後ろから走ってくる', bf.x < p1.x, `彼氏=${bf.x.toFixed(0)} 本人=${p1.x}`);
+  check('彼氏は相手の方へ走る', bf.vx > 0, `vx=${bf.vx}`);
+
+  // 追い越して当たるまで
+  let passed = false;
+  for (let i = 0; i < 120 && p2.health > 0; i += 1) {
+    run(sim, 1, 0);
+    const cur = sim.projectiles.find((p) => p.type === 'boyfriend');
+    if (cur && cur.x > p1.x) passed = true;
+  }
+  check('彼氏が本人を追い越していく', passed);
+  check('彼氏の突進が当たる', p2.health === 0, `hp=${p2.health}`);
+  check('彼氏の突進はダウンを奪う', p2.state === STATE.DOWN, `state=${p2.state}`);
+}
+
+{
+  // 彼氏はガードごと崩す（スキルはガードを崩せる、の枠）
+  const sim = newSim(['schoolgirl', 'swordsman']);
+  place(sim, 500, 1100);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.SKILL);
+  for (let i = 0; i < 140 && p2.health > 0; i += 1) run(sim, 1, 0, BTN.GUARD);
+  check('彼氏はガードしていても当たる', p2.health === 0, `hp=${p2.health}`);
+}
+
+{
+  // 彼氏は同時に 1 人まで。連呼できない
+  const sim = newSim(['schoolgirl', 'berserker']);
+  place(sim, 500, 1400);
+  run(sim, 1, BTN.SKILL);
+  for (let i = 0; i < 20 && sim.projectiles.length === 0; i += 1) run(sim, 1, 0);
+  const first = sim.projectiles.length;
+  run(sim, 40, BTN.SKILL);
+  const bfCount = sim.projectiles.filter((p) => p.type === 'boyfriend').length;
+  check('彼氏は場に1人まで', first === 1 && bfCount <= 1, `${first} → ${bfCount}`);
+}
+
+{
+  // 空中でも両方出せる
+  const sim = newSim(['schoolgirl', 'swordsman']);
+  place(sim, 500, 1100);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 6, 0);
+  run(sim, 1, BTN.ATTACK);
+  check('空中攻撃が出る', p1.moveId === 'airLaser', `move=${p1.moveId}`);
+  for (let i = 0; i < 20 && sim.projectiles.length === 0; i += 1) run(sim, 1, 0);
+  const shot = sim.projectiles[0];
+  check('空中レーザーは斜め下へ飛ぶ', shot && shot.vx > 0 && shot.vy < 0,
+    `vx=${shot?.vx.toFixed(1)} vy=${shot?.vy.toFixed(1)}`);
+}
+
 // ── 空中攻撃 ────────────────────────────────────────────────
 section('空中攻撃');
 for (const [id, attack, skill] of [

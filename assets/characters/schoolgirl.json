@@ -1,0 +1,131 @@
+{
+  "id": "schoolgirl",
+  "image": "schoolgirl.webp",
+  "atlasWidth": 1440,
+  "atlasHeight": 2332,
+  "sourceFps": 10,
+  "scale": 0.34904,
+  "height": 200,
+  "animations": {
+    "idle": {
+      "x": 0,
+      "y": 0,
+      "cw": 82,
+      "ch": 207,
+      "frames": 8,
+      "ax": 40.36,
+      "ay": 203.84,
+      "src": "jkgirl"
+    },
+    "walk": {
+      "x": 0,
+      "y": 207,
+      "cw": 85,
+      "ch": 196,
+      "frames": 8,
+      "ax": 41.75,
+      "ay": 193.72,
+      "src": "jkgirl"
+    },
+    "run": {
+      "x": 0,
+      "y": 403,
+      "cw": 107,
+      "ch": 190,
+      "frames": 8,
+      "ax": 52.57,
+      "ay": 190.23,
+      "src": "jkgirl"
+    },
+    "jump": {
+      "x": 0,
+      "y": 593,
+      "cw": 116,
+      "ch": 239,
+      "frames": 8,
+      "ax": 57.11,
+      "ay": 237,
+      "src": "jkgirl"
+    },
+    "fall": {
+      "x": 0,
+      "y": 832,
+      "cw": 109,
+      "ch": 160,
+      "frames": 5,
+      "ax": 53.62,
+      "ay": 159.16,
+      "src": "jkgirl"
+    },
+    "land": {
+      "x": 0,
+      "y": 992,
+      "cw": 94,
+      "ch": 188,
+      "frames": 8,
+      "ax": 45.94,
+      "ay": 186.74,
+      "src": "jkgirl"
+    },
+    "guard": {
+      "x": 0,
+      "y": 1180,
+      "cw": 100,
+      "ch": 193,
+      "frames": 8,
+      "ax": 40.36,
+      "ay": 190.92,
+      "src": "jkgirl"
+    },
+    "hurt": {
+      "x": 0,
+      "y": 1373,
+      "cw": 92,
+      "ch": 191,
+      "frames": 8,
+      "ax": 44.9,
+      "ay": 191.62,
+      "src": "jkgirl"
+    },
+    "death": {
+      "x": 0,
+      "y": 1564,
+      "cw": 180,
+      "ch": 192,
+      "frames": 8,
+      "ax": 94.81,
+      "ay": 188.83,
+      "src": "jkgirl"
+    },
+    "point": {
+      "x": 0,
+      "y": 1756,
+      "cw": 102,
+      "ch": 191,
+      "frames": 8,
+      "ax": 31.59,
+      "ay": 188.13,
+      "src": "jkgirl_extra"
+    },
+    "photo": {
+      "x": 0,
+      "y": 1947,
+      "cw": 103,
+      "ch": 192,
+      "frames": 8,
+      "ax": 34.03,
+      "ay": 187.43,
+      "src": "jkgirl_extra"
+    },
+    "crouch": {
+      "x": 0,
+      "y": 2139,
+      "cw": 98,
+      "ch": 193,
+      "frames": 8,
+      "ax": 51.96,
+      "ay": 190.23,
+      "src": "jkgirl_crouch"
+    }
+  }
+}

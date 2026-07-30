@@ -75,6 +75,71 @@ export const PROJECTILES = {
     style: 'orb',
     color: '#ff9a5a',
   },
+
+  /**
+   * 女子高生のスマホカメラから出るレーザー。
+   * 追尾せず、撃った向きへ一直線に飛ぶ。曲がらないぶん速く、判定も細長い。
+   */
+  laser: {
+    radius: 16,
+    speed: 13.5,
+    turnRate: 0,
+    lifetime: 130,
+    /** 場に 2 本まで。真っ直ぐで避けやすいので、弾より少し多く出せる。 */
+    maxAlive: 2,
+    /** スマホを構えた高さ（足元原点・前方向が正）。カメラのレンズあたり。 */
+    origin: { x: 46, y: 132 },
+    /** 細長い判定。しゃがめば下をくぐれる高さに置いてある。 */
+    box: { w: 96, h: 34 },
+    damage: 52,
+    hitstun: 18,
+    blockstun: 11,
+    hitstop: 5,
+    pushHit: 4,
+    pushBlock: 2.4,
+    guardBreak: false,
+    destroyOnHit: true,
+    style: 'beam',
+    color: '#ff6fd0',
+  },
+
+  /**
+   * 女子高生のスキルで走ってくる彼氏。
+   *
+   * 見た目も判定も人ひとりぶんなので、飛び道具の枠で扱いつつ
+   * 専用のスプライトで描く（style: 'sprite'）。後ろから走ってきて、
+   * 相手に当たるかステージ端まで走り抜けたら消える。
+   */
+  boyfriend: {
+    radius: 46,
+    speed: 11.5,
+    turnRate: 0,
+    lifetime: 150,
+    /** 同時に 1 人まで。走っている間は次を呼べない。 */
+    maxAlive: 1,
+    /** 画面外の後ろから走り込んでくる。 */
+    origin: { x: -300, y: 0 },
+    /** 人ひとりぶんの判定。足元原点で、腰から頭までを覆う。 */
+    box: { w: 110, h: 190, y: 8 },
+    /** 描画に使うアトラスと、走り → タックルへ絵を切り替えるフレーム。 */
+    style: 'sprite',
+    sheet: 'boyfriend',
+    anims: { run: 'run', hit: 'tackle' },
+    /** これだけ走ってからタックルの絵になる。飛び込む直前で構えが変わる。 */
+    runFrames: 26,
+    animFps: 16,
+    damage: 150,
+    hitstun: 34,
+    blockstun: 16,
+    hitstop: 12,
+    pushHit: 12,
+    pushBlock: 6,
+    /** 体当たりなのでガードごと持っていく（スキルはガードを崩せる、の枠）。 */
+    guardBreak: true,
+    knockdown: true,
+    destroyOnHit: true,
+    color: '#7ea6ff',
+  },
 };
 
 /** 飛び道具として登録されている type か。外れたものは見た目エフェクト扱いになる。 */

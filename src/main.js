@@ -7,7 +7,12 @@
 import { loadAllCharacterSprites } from './core/assets.js';
 import { InputManager } from './core/input.js';
 import { GameLoop } from './core/loop.js';
-import { CHARACTER_IDS, ROSTER, getCharacter } from './game/characters/index.js';
+import {
+  CHARACTER_IDS,
+  EXTRA_SPRITE_IDS,
+  ROSTER,
+  getCharacter,
+} from './game/characters/index.js';
 import { Simulation } from './game/sim.js';
 import { CpuController } from './game/ai.js';
 import { Renderer } from './render/renderer.js';
@@ -90,7 +95,8 @@ async function boot() {
   window.addEventListener('resize', resizeCanvas);
   window.addEventListener('orientationchange', () => setTimeout(resizeCanvas, 120));
 
-  app.sprites = await loadAllCharacterSprites(CHARACTER_IDS, (done, total) => {
+  // キャラ本体に加えて、技から出てくるスプライト（彼氏）も一緒に読む
+  app.sprites = await loadAllCharacterSprites([...CHARACTER_IDS, ...EXTRA_SPRITE_IDS], (done, total) => {
     dom.loadingFill.style.width = `${Math.round((done / total) * 100)}%`;
     dom.loadingText.textContent = `キャラクター読み込み中… ${done}/${total}`;
   });

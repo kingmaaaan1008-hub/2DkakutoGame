@@ -60,6 +60,23 @@ $CONFIG = @(
       @{ file = 'mage_extra';  ref = 'guard';  dx = 0; dy = 0 },
       @{ file = 'mage_crouch'; ref = 'crouch'; dx = 0; dy = 0 }
     )
+  },
+  @{
+    # jkgirl_extra holds 'point' (the skill cue) and 'photo' (the laser).
+    id = 'schoolgirl'; targetHeight = 200; anchorMetric = 'body'
+    sheets = @(
+      @{ file = 'jkgirl';        ref = 'idle';   dx = 0; dy = 0 },
+      @{ file = 'jkgirl_extra';  ref = 'point';  dx = 0; dy = 0 },
+      @{ file = 'jkgirl_crouch'; ref = 'crouch'; dx = 0; dy = 0 }
+    )
+  },
+  @{
+    # Not a playable character: the boyfriend the schoolgirl's skill summons.
+    # Built as its own atlas so the renderer can draw him like any other sprite.
+    id = 'boyfriend'; targetHeight = 215; anchorMetric = 'body'
+    sheets = @(
+      @{ file = 'jkboy'; ref = 'run'; dx = 0; dy = 0 }
+    )
   }
 )
 
