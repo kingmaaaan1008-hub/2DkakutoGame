@@ -275,23 +275,27 @@ async function connectOnline() {
 // ── ループ ─────────────────────────────────────────────────
 
 /**
- * 画面右半分のフリックを「相手の方＝攻撃 / 逆＝スキル」に振り分けるために、
- * 相手がどちら側にいるかを入力側へ伝える。
- * キャラの `facing` ではなく実際の位置関係を見るのは、空中で相手に
- * 背を向けている間もフリックの向きと出る技が食い違わないようにするため。
+ * スワイプの意味が試合の状況で変わるぶんを、入力側へ伝える。
+ *
+ * - `aimDir`: 相手がどちら側にいるか。右半分のフリックを
+ *   「相手の方＝スキル」に振り分けるのに使う。キャラの `facing` ではなく
+ *   実際の位置関係を見るのは、空中で相手に背を向けている間も
+ *   弾いた向きと出る技が食い違わないようにするため。
+ * - `airborne`: 空中かどうか。空中では横スワイプもジャンプになる。
  */
-function updateAimDir() {
+function updateInputContext() {
   const me = app.mode === 'online' ? (app.onlineSlot ?? 0) : 0;
   const [a, b] = app.sim.fighters;
   const self = me === 0 ? a : b;
   const foe = me === 0 ? b : a;
   app.input.aimDir[0] = foe.x >= self.x ? 1 : -1;
+  app.input.airborne[0] = self.airborne;
 }
 
 function update() {
   if (!app.sim || app.paused) return;
 
-  updateAimDir();
+  updateInputContext();
   const bits = app.input.poll();
   // オンラインでは自分の入力だけが意味を持つ（スロットは相手側で解決される）
   app.session.advance(bits);

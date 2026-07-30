@@ -1108,6 +1108,49 @@ section('スワイプから入力ビットへの振り分け');
 }
 
 {
+  // 空中では横スワイプもその向きへのジャンプになる（空中の移動手段はジャンプだけ）
+  const im = new InputManager();
+  const latched = () => {
+    const v = im.latch[0];
+    im.latch[0] = 0;
+    return v;
+  };
+  const small = SWIPE.THRESHOLD + 2;
+  const big = SWIPE.RUN + 2;
+
+  im.airborne[0] = true;
+  im._applyMoveSwipe(0, { gesture: GESTURE.RIGHT, dist: small });
+  check('空中の右スワイプでジャンプが入る', latched() === BTN.UP);
+  check('空中の右スワイプは右を押しっぱなしにする', im.touchBits[0] === BTN.RIGHT,
+    `bits=${im.touchBits[0]}`);
+
+  im._applyMoveSwipe(0, { gesture: GESTURE.LEFT, dist: big });
+  check('空中の左スワイプでもジャンプが入る', latched() === BTN.UP);
+  check('空中では大きく弾いても走りにはならない', im.touchBits[0] === BTN.LEFT,
+    `bits=${im.touchBits[0]}`);
+
+  // 地上に戻れば同じ操作が歩き・走りに戻る
+  im.airborne[0] = false;
+  im._applyMoveSwipe(0, { gesture: GESTURE.LEFT, dist: big });
+  check('着地すれば横スワイプは走りに戻る', im.touchBits[0] === (BTN.LEFT | BTN.DASH),
+    `bits=${im.touchBits[0]}`);
+  check('着地後の横スワイプではジャンプは入らない', latched() === 0);
+
+  // 走ったまま跳んで、空中で横に弾いても走りは保つ（着地してまた走れる）
+  im.airborne[0] = true;
+  im._applyMoveSwipe(0, { gesture: GESTURE.LEFT, dist: small });
+  check('空中で同じ向きへ弾いても走りは保つ', im.touchBits[0] === (BTN.LEFT | BTN.DASH),
+    `bits=${im.touchBits[0]}`);
+  check('そのときもジャンプは入る', latched() === BTN.UP);
+
+  // 空中の下スワイプは今までどおりしゃがみ入力（着地後に効く）
+  im._applyMoveSwipe(0, { gesture: GESTURE.DOWN, dist: small });
+  check('空中の下スワイプではジャンプしない', latched() === 0);
+  check('空中の下スワイプはしゃがみのまま', im.touchBits[0] === BTN.DOWN,
+    `bits=${im.touchBits[0]}`);
+}
+
+{
   const im = new InputManager();
   const latched = () => {
     const v = im.latch[0];

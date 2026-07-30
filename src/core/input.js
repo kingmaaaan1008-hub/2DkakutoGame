@@ -81,6 +81,15 @@ export class InputManager {
      */
     this.aimDir = [1, 1];
     /**
+     * 自分が空中にいるか。これも毎フレーム試合の状況から入れ直してもらう。
+     *
+     * 空中では横入力で速度が変わらない（跳んだ瞬間の向きで軌道が決まる）ので、
+     * 横スワイプをそのままにしておくと空振りになる。
+     * 空中の移動手段はジャンプしかないので、横スワイプもその向きへの
+     * ジャンプとして扱う。2段ジャンプを出すのに真上を狙う必要がなくなる。
+     */
+    this.airborne = [false, false];
+    /**
      * 前回の poll 以降に「押された」ビット。
      * 1/60 秒より短いタップは押下と解放が同じフレームの隙間に収まってしまい、
      * そのままだとシミュレーションが一度も押下を観測できない。
@@ -239,50 +248,47 @@ export class InputManager {
   _applyMoveSwipe(slot, { gesture, dist }) {
     const held = BTN.LEFT | BTN.RIGHT | BTN.DOWN | BTN.DASH;
     const bits = this.touchBits[slot];
+
+    if (gesture === GESTURE.UP) {
+      // 方向を落として真上に跳ぶ
+      this.touchBits[slot] = bits & ~held;
+      this.latch[slot] |= BTN.UP;
+      return { cue: 'jumpUp', rest: '' };
+    }
+    if (gesture === GESTURE.DOWN) {
+      this.touchBits[slot] = (bits & ~held) | BTN.DOWN;
+      return { cue: 'crouch', rest: 'crouch' };
+    }
+
     const dirBit =
       gesture === GESTURE.LEFT || gesture === GESTURE.UP_LEFT
         ? BTN.LEFT
         : gesture === GESTURE.RIGHT || gesture === GESTURE.UP_RIGHT
           ? BTN.RIGHT
           : 0;
-    // 同じ向きへ既に走っているか。ジャンプで走りが解けないようにするのに使う
-    const running = (bits & BTN.DASH) !== 0 && (bits & dirBit) !== 0;
+    if (dirBit === 0) return { cue: '', rest: '' };
     const side = dirBit === BTN.LEFT ? 'Left' : 'Right';
 
-    switch (gesture) {
-      case GESTURE.LEFT:
-      case GESTURE.RIGHT: {
-        // 弾いた距離だけで決める。弾いた指をそのまま引き伸ばせば歩き→走りに上がる
-        const dashing = dist >= SWIPE.RUN;
-        const ground = (dashing ? 'dash' : 'walk') + side;
-        this.touchBits[slot] = (bits & ~held) | dirBit | (dashing ? BTN.DASH : 0);
-        return { cue: ground, rest: ground };
-      }
-
-      case GESTURE.UP_LEFT:
-      case GESTURE.UP_RIGHT: {
-        // 跳ぶための弾きの長さで地上の速さまで変わると分かりづらいので、
-        // 走っていたならそのまま走りを保つ（着地してまた走れる）
-        const ground = (running ? 'dash' : 'walk') + side;
-        // ジャンプと同じフレームに方向が要る（跳んだ瞬間の向きで軌道が決まる）
-        this.touchBits[slot] = (bits & ~held) | dirBit | (running ? BTN.DASH : 0);
-        this.latch[slot] |= BTN.UP;
-        return { cue: 'jump' + side, rest: ground };
-      }
-
-      case GESTURE.UP:
-        // 方向を落として真上に跳ぶ
-        this.touchBits[slot] = bits & ~held;
-        this.latch[slot] |= BTN.UP;
-        return { cue: 'jumpUp', rest: '' };
-
-      case GESTURE.DOWN:
-        this.touchBits[slot] = (bits & ~held) | BTN.DOWN;
-        return { cue: 'crouch', rest: 'crouch' };
-
-      default:
-        return { cue: '', rest: '' };
+    // 斜め上は跳ぶ。横も、空中なら跳ぶ
+    // （空中では横入力で速度が変わらないので、そのままでは空振りになる。
+    //  空中の移動手段はジャンプだけなので、横スワイプもジャンプとして扱う）
+    const diagonal = gesture === GESTURE.UP_LEFT || gesture === GESTURE.UP_RIGHT;
+    if (diagonal || this.airborne[slot]) {
+      // 跳ぶための弾きの長さで地上の速さまで変わると分かりづらいので、
+      // 同じ向きへ走っていたならそのまま走りを保つ（着地してまた走れる）
+      const running = (bits & BTN.DASH) !== 0 && (bits & dirBit) !== 0;
+      // ジャンプと同じフレームに方向が要る（跳んだ瞬間の向きで軌道が決まる）
+      this.touchBits[slot] = (bits & ~held) | dirBit | (running ? BTN.DASH : 0);
+      this.latch[slot] |= BTN.UP;
+      return { cue: 'jump' + side, rest: (running ? 'dash' : 'walk') + side };
     }
+
+    // 地上の横スワイプ。弾いた距離だけで決める
+    // （弾いた指をそのまま引き伸ばせば歩き → 走りに上がる）
+    const dashing = dist >= SWIPE.RUN;
+    const ground = (dashing ? 'dash' : 'walk') + side;
+    this.touchBits[slot] = (bits & ~held) | dirBit | (dashing ? BTN.DASH : 0);
+    return { cue: ground, rest: ground };
   }
 
   /**
