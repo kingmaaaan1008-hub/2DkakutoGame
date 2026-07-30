@@ -82,6 +82,35 @@ const JUMP_ESCAPE_FRAMES = 9;
 const RETREAT_ESCAPE_FRAMES = 7;
 
 /**
+ * ホーミング弾を 2段ジャンプで避けるための値。総当たりで探して決めた。
+ *
+ * 「真上に跳ぶ → 弾が近づいたら**前へ**跳び直す」で 7 割避けられる。
+ * 1段目だけでは 0〜7% しか避けられず、2段目が本体。
+ * 弾は turnRate が低く曲がりきれないので、間近で軌道を変えると置いていける。
+ *
+ * 2段目の合図に残りフレームではなく**弾との実距離**を使うのが要点。
+ * 曲がる弾は到達時間の見積りが当てにならず、距離で見た方が素直だった
+ * （残りフレームで合わせると成功率は 14% まで落ちる）。
+ */
+const DODGE_ARM_FRAMES = 34;
+/**
+ * 回避を始める窓の上限。早く跳びすぎると弾が来る前に着地してしまい、
+ * 2段目を弾に合わせられない（探索で成功率が 7 割 → 2 割に落ちた）。
+ */
+const DODGE_ARM_MAX = 50;
+const DODGE_AIR_DIST = 145;
+
+/**
+ * 弾を見て何か決め始める残りフレーム。
+ *
+ * ガードは間近で間に合うが、2段ジャンプ回避は跳ぶ時間が要るので、
+ * ガードより早い段階から考え始めないと選べない。
+ * 早めに見ておくと「弾を見ながら詰める」判断にも入れるので、
+ * 実測では弾を撒く相手への勝率がここで 22% → 31% に伸びた。
+ */
+const PROJECTILE_REACT = 84;
+
+/**
  * 飛んできている弾に反応し始める残りフレーム（相対速度で見た到達時間）。
  *
  * 実測で決めた値。短くすると足は止まらないが受け損なう（14 で勝率 0%）。
@@ -326,6 +355,20 @@ export class CpuController {
     return best;
   }
 
+  /** いちばん近い相手の弾との距離。2段ジャンプの 2段目の合図に使う。 */
+  _nearestShotDist(sim, me) {
+    let best = Infinity;
+    const hurt = me.hurtBox();
+    const cy = hurt.y + hurt.h * 0.5;
+    for (const p of sim.projectiles) {
+      if (p.owner === this.index) continue;
+      const dx = me.x - p.x;
+      const dy = cy - p.y;
+      best = Math.min(best, Math.sqrt(dx * dx + dy * dy));
+    }
+    return best;
+  }
+
   /** 相手がガードを固めているか（崩しに行く価値がある状態か）。 */
   _turtling(opponent) {
     return opponent.guardHeld && (opponent.state === STATE.GUARD || opponent.state === STATE.BLOCK);
@@ -499,12 +542,18 @@ export class CpuController {
         opts.push({ act: 'skill', bits: BTN.SKILL, ticks: 5, weight: cfg.aggression });
       }
       if (me.airJumps > 0) {
-        // 一発が致命傷なので、跳び直して軌道をずらす。危ないときは特に。
-        // 空中はガードできないので、弾が来ているならこれが唯一の答えになる
-        const shot = this._incomingProjectile(sim, me);
-        const danger = this._incomingAttack(foe) || (shot && shot.frames <= PROJECTILE_WATCH) ? 3 : 0.6;
-        opts.push({ act: 'jumpIn', bits: BTN.UP | toFoe, ticks: 5, weight: cfg.guard * danger });
-        opts.push({ act: 'retreat', bits: BTN.UP | away, ticks: 5, weight: cfg.guard * danger * 0.6 });
+        // 2段ジャンプ回避の 2段目。弾が間近まで来たところで前へ跳び直すと、
+        // 曲がりきれない弾を置いていける（探索では 7 割成功）。
+        // 前へ跳ぶので、避けながら間合いも詰まる。
+        if (this._nearestShotDist(sim, me) <= DODGE_AIR_DIST) {
+          opts.push({ act: 'dodge', bits: BTN.UP | toFoe, ticks: 5, weight: cfg.guard * 9 });
+          opts.push({ act: 'retreat', bits: BTN.UP | away, ticks: 5, weight: cfg.guard * 1.5 });
+        } else {
+          // 一発が致命傷なので、危ないときは跳び直して軌道をずらす
+          const danger = this._incomingAttack(foe) ? 3 : 0.6;
+          opts.push({ act: 'jumpIn', bits: BTN.UP | toFoe, ticks: 5, weight: cfg.guard * danger });
+          opts.push({ act: 'retreat', bits: BTN.UP | away, ticks: 5, weight: cfg.guard * danger * 0.6 });
+        }
       }
       opts.push({ act: 'rush', bits: toFoe, ticks: 5, weight: dist > 200 ? 2 : 0.5 });
       opts.push({ act: 'wait', bits: 0, ticks: 5, weight: 0.6 });
@@ -515,20 +564,39 @@ export class CpuController {
     // 弾は撃った本人と切り離して飛ぶので、技のモーションを見ているだけでは
     // 気づけない。相手の技より先に見るのは、弾のほうが先に届くから。
     const shot = this._incomingProjectile(sim, me);
-    if (shot && shot.frames <= PROJECTILE_WATCH) {
+    if (shot && shot.frames <= PROJECTILE_REACT) {
       const opts = [];
-      // 弾に対する答えはガード。弾は guardBreak を持たないので確実に止まる。
-      //
-      // 跳んで避けるのは**逆効果**だった。魔法使いの弾は杖の先（足元から 248）
-      // から出て追尾しながら降りてくるので、跳ぶと弾の高さへ自分から入る。
-      // しかも空中はガードできないので、外したらそのまま食らう。
-      // しゃがみも効かない（弾はしゃがんだぶん狙いを下げ直してくる）。
-      if (!shot.fromBehind) {
-        opts.push({ act: 'guard', bits: BTN.GUARD, ticks: 14, weight: cfg.guard * 8 });
-      } else {
-        // 背中側へ回り込まれた弾だけは受けられないので、跳んで軌道をずらす
-        opts.push({ act: 'jumpIn', bits: BTN.UP | toFoe, ticks: 8, weight: cfg.guard * 4 });
-        opts.push({ act: 'retreat', bits: away | BTN.DASH, ticks: 10, weight: cfg.guard * 2 });
+      // 間近か。ガードは 1 フレームで出るので、受けるならここまで待てる
+      const near = shot.frames <= PROJECTILE_WATCH;
+
+      if (near) {
+        // 弾に対するいちばん確実な答えはガード。弾は guardBreak を持たない。
+        // しゃがみは効かない（弾はしゃがんだぶん狙いを下げ直してくる）。
+        if (!shot.fromBehind) {
+          opts.push({ act: 'guard', bits: BTN.GUARD, ticks: 14, weight: cfg.guard * 8 });
+        } else {
+          // 背中側へ回り込まれた弾は受けられないので、跳んで軌道をずらす
+          opts.push({ act: 'dodge', bits: BTN.UP, ticks: 6, weight: cfg.guard * 4 });
+          opts.push({ act: 'retreat', bits: away | BTN.DASH, ticks: 10, weight: cfg.guard * 2 });
+        }
+      }
+
+      // 2段ジャンプで避ける。1段目は**真上**に跳ぶだけで、避けるのは 2段目
+      // （空中の分岐が弾との距離を見て前へ跳び直す）。
+      // 跳ぶ時間が残っているうちにしか始められない。
+      // 2段目が無いと跳んだだけの的になるので、残り回数も確認する。
+      if (
+        me.airJumps > 0 &&
+        shot.frames >= DODGE_ARM_FRAMES &&
+        shot.frames <= DODGE_ARM_MAX
+      ) {
+        opts.push({ act: 'dodge', bits: BTN.UP, ticks: 6, weight: cfg.guard * 4 });
+      }
+
+      // まだ間近でないなら、詰める足は止めない（弾を見るたび固まると近づけない）
+      if (!near) {
+        opts.push({ act: 'rush', bits: toFoe | BTN.DASH, ticks: 8, weight: cfg.dash * 3 });
+        opts.push({ act: 'walkIn', bits: toFoe, ticks: 8, weight: 1.5 });
       }
       opts.push({ act: 'wait', bits: 0, ticks: 6, weight: (1 - cfg.guard) * 2 });
       return this._choose(rng, opts);

@@ -1365,5 +1365,44 @@ section('CPU の飛び道具への対応');
   check('通り過ぎた弾には反応しない', away === null || away.frames > 0);
 }
 
+{
+  // ホーミング弾は 2段ジャンプで避けられる。
+  // 要点は 2段目で、弾が間近まで来たところで前へ跳び直すと
+  // 曲がりきれない弾を置いていける（探索では 7 割成功）。
+  // 1段目だけでは避けられないので、2段目が出ることを確かめる。
+  const { CpuController } = await import('../src/game/ai.js');
+  const sim = newSim(['mage', 'swordsman']);
+  place(sim, 700, 1150);
+  const cpu = new CpuController(1, 'hard');
+  const me = sim.fighters[1];
+
+  run(sim, 1, BTN.ATTACK);
+  for (let i = 0; i < 20 && sim.projectiles.length === 0; i += 1) run(sim, 1, 0);
+  check('弾が出ている（2段ジャンプ回避の前提）', sim.projectiles.length > 0);
+
+  // 跳ばせてから、弾を間近まで寄せた状態で何を選ぶか見る
+  run(sim, 1, 0, BTN.UP);
+  for (let i = 0; i < 6; i += 1) run(sim, 1, 0);
+  check('1段目で浮いている', me.airborne && me.airJumps > 0,
+    `y=${me.y.toFixed(0)} airJumps=${me.airJumps}`);
+
+  const bolt = sim.projectiles[0];
+  bolt.x = me.x + 100; // 弾を間近（DODGE_AIR_DIST の内側）へ置く
+  bolt.y = me.y + 90;
+  const dist = cpu._nearestShotDist(sim, me);
+  check('弾との距離を測れる', dist < 150, `dist=${dist.toFixed(0)}`);
+
+  // 何度か決め直させて、2段目が出るかを見る（手は混ぜているので一発では出ない）
+  let airJumped = false;
+  for (let i = 0; i < 40 && !airJumped; i += 1) {
+    const bits = cpu.think(sim);
+    if (cpu.lastAct === 'dodge' && bits & BTN.UP) airJumped = true;
+    // 弾を間近に保ったまま観測する
+    sim.projectiles[0] && Object.assign(sim.projectiles[0], { x: me.x + 100, y: me.y + 90 });
+    sim.step([0, bits]);
+  }
+  check('弾が間近なら2段目を出して避けようとする', airJumped, `lastAct=${cpu.lastAct}`);
+}
+
 console.log(`\n合計 ${passed + failed} 件: 成功 ${passed} / 失敗 ${failed}`);
 process.exit(failed === 0 ? 0 : 1);
