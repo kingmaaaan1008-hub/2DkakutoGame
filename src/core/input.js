@@ -59,6 +59,16 @@ const HELD_BY_ZONE = {
 /** 押した瞬間だけ意味を持つ入力を出しておく猶予（ミリ秒）。表示を戻すのに使う。 */
 const CUE_PULSE_MS = 320;
 
+/**
+ * タップと見なす最長の接触時間（ミリ秒）。
+ *
+ * 攻撃は指を離した時点で出る。押した瞬間に出せればその方が速いが、
+ * それだとスキルやガードのスワイプも「まず押す」ので、毎回攻撃が
+ * 暴発してしまう。一撃で決まるゲームなので、暴発の方が遅延より痛い。
+ * 上限を置いているのは、置きっぱなしの指を離しただけで技が出ないようにするため。
+ */
+const TAP_MAX_MS = 500;
+
 export class InputManager {
   constructor() {
     this.keyBits = [0, 0];
@@ -145,6 +155,10 @@ export class InputManager {
       const tracker = new SwipeTracker();
       const cue = { rest: '', timer: 0 };
       let pointerId = null;
+      /** この指で一度でもスワイプを認識したか。タップの判定に使う。 */
+      let swiped = false;
+      let downAt = 0;
+
       this._zones.push({ el, cue });
 
       const down = (e) => {
@@ -160,6 +174,8 @@ export class InputManager {
           /* 既に離された指などは掴めない。無視して続行する */
         }
         tracker.start(e.clientX, e.clientY);
+        swiped = false;
+        downAt = e.timeStamp;
         el.classList.add('is-touched');
       };
 
@@ -168,6 +184,7 @@ export class InputManager {
         e.preventDefault();
         const hit = tracker.move(e.clientX, e.clientY, e.timeStamp);
         if (!hit) return;
+        swiped = true;
         this._showCue(
           el,
           cue,
@@ -175,25 +192,33 @@ export class InputManager {
         );
       };
 
-      const up = (e) => {
+      /** @param {boolean} tappable pointerup か（pointercancel では技を出さない） */
+      const finish = (e, tappable) => {
         if (e.pointerId !== pointerId) return;
         e.preventDefault();
         pointerId = null;
         tracker.end();
         this.touchBits[slot] &= ~HELD_BY_ZONE[kind];
         el.classList.remove('is-touched');
-        this._showCue(el, cue, { cue: '', rest: '' });
+
+        // 攻撃エリアで「弾かずに離した」＝タップ。攻撃はこれで出す。
+        const tapped =
+          tappable && kind === 'action' && !swiped && e.timeStamp - downAt <= TAP_MAX_MS;
+        this._showCue(el, cue, tapped ? this._applyActionTap(slot) : { cue: '', rest: '' });
       };
+
+      const up = (e) => finish(e, true);
+      const cancel = (e) => finish(e, false);
 
       el.addEventListener('pointerdown', down);
       el.addEventListener('pointermove', move);
       el.addEventListener('pointerup', up);
-      el.addEventListener('pointercancel', up);
+      el.addEventListener('pointercancel', cancel);
       this._touchCleanup.push(() => {
         el.removeEventListener('pointerdown', down);
         el.removeEventListener('pointermove', move);
         el.removeEventListener('pointerup', up);
-        el.removeEventListener('pointercancel', up);
+        el.removeEventListener('pointercancel', cancel);
         clearTimeout(cue.timer);
       });
     }
@@ -253,7 +278,11 @@ export class InputManager {
 
   /**
    * 攻撃エリアのスワイプをビットに落とす。
-   * 相手のいる方へ弾けば攻撃、逆へ弾けばスキル、下へ弾けばガード。
+   * 相手のいる方へ弾けばスキル、下へ弾けばガード。
+   *
+   * スキルを「相手の方へ」にしているのは、踏み込んで出す技の向きと
+   * 指の動きを一致させるため。左右ではなく前後で決めるので、
+   * 相手が回り込んでも弾いた向きと出る技が食い違わない。
    * 斜め上は横に丸めるので、上へ流れても技は出る。
    */
   _applyActionSwipe(slot, { gesture }) {
@@ -267,12 +296,21 @@ export class InputManager {
         : gesture === GESTURE.RIGHT || gesture === GESTURE.UP_RIGHT
           ? 1
           : 0;
-    if (dir === 0) return { cue: '', rest: '' }; // 真上は割り当てなし
+    // 真上と、相手に背を向ける方向は割り当てなし
+    if (dir !== this.aimDir[slot]) return { cue: '', rest: '' };
     // 技を出したらガードは解ける
     this.touchBits[slot] &= ~BTN.GUARD;
-    const toward = dir === this.aimDir[slot];
-    this.latch[slot] |= toward ? BTN.ATTACK : BTN.SKILL;
-    return { cue: toward ? 'attack' : 'skill', rest: '' };
+    this.latch[slot] |= BTN.SKILL;
+    return { cue: 'skill', rest: '' };
+  }
+
+  /**
+   * 攻撃エリアのタップ。
+   * 攻撃は一番よく使うので、向きも狙いも要らないタップに置いてある。
+   */
+  _applyActionTap(slot) {
+    this.latch[slot] |= BTN.ATTACK;
+    return { cue: 'attack', rest: '' };
   }
 
   /**

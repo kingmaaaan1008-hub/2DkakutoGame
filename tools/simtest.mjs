@@ -1055,31 +1055,35 @@ section('スワイプから入力ビットへの振り分け');
     return v;
   };
 
-  // 相手が右にいるとき
+  // 攻撃は向きの要らないタップ
   im.aimDir[0] = 1;
-  im._applyActionSwipe(0, { gesture: GESTURE.RIGHT });
-  check('相手の方へフリックで攻撃', latched() === BTN.ATTACK);
-  im._applyActionSwipe(0, { gesture: GESTURE.LEFT });
-  check('逆へフリックでスキル', latched() === BTN.SKILL);
+  check('タップで攻撃', im._applyActionTap(0) && latched() === BTN.ATTACK);
+  check('タップは押しっぱなしのビットを作らない', im.touchBits[0] === 0, `bits=${im.touchBits[0]}`);
 
-  // 相手が左に回り込んだら、同じ操作の意味が入れ替わる
+  // スキルは相手の方へフリック
+  im._applyActionSwipe(0, { gesture: GESTURE.RIGHT });
+  check('相手の方へフリックでスキル', latched() === BTN.SKILL);
+  im._applyActionSwipe(0, { gesture: GESTURE.LEFT });
+  check('背を向ける方向は割り当てなし', latched() === 0);
+
+  // 相手が左に回り込んだら、フリックの向きも入れ替わる
   im.aimDir[0] = -1;
   im._applyActionSwipe(0, { gesture: GESTURE.LEFT });
-  check('相手が左なら左フリックが攻撃', latched() === BTN.ATTACK);
+  check('相手が左なら左フリックがスキル', latched() === BTN.SKILL);
   im._applyActionSwipe(0, { gesture: GESTURE.RIGHT });
-  check('相手が左なら右フリックがスキル', latched() === BTN.SKILL);
+  check('相手が左なら右フリックは割り当てなし', latched() === 0);
 
   // 斜め上は横に丸める（上に流れても技は出る）
   im.aimDir[0] = 1;
   im._applyActionSwipe(0, { gesture: GESTURE.UP_RIGHT });
-  check('斜め上へのフリックも技になる', latched() === BTN.ATTACK);
+  check('斜め上へのフリックもスキルになる', latched() === BTN.SKILL);
 
   im._applyActionSwipe(0, { gesture: GESTURE.DOWN });
   check('下フリックでガードが押しっぱなしになる', im.touchBits[0] === BTN.GUARD,
     `bits=${im.touchBits[0]}`);
   im._applyActionSwipe(0, { gesture: GESTURE.RIGHT });
-  check('技を出すとガードは解ける', im.touchBits[0] === 0, `bits=${im.touchBits[0]}`);
-  check('ガードを解いて出した技は攻撃', latched() === BTN.ATTACK);
+  check('スキルを出すとガードは解ける', im.touchBits[0] === 0, `bits=${im.touchBits[0]}`);
+  check('ガードを解いて出したのはスキル', latched() === BTN.SKILL);
 
   im._applyActionSwipe(0, { gesture: GESTURE.UP });
   check('攻撃エリアの真上は割り当てなし', im.touchBits[0] === 0 && latched() === 0);
