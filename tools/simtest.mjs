@@ -12,7 +12,7 @@ import { BTN, STATE, ROUND_INTRO_TICKS, CROUCH_TICKS } from '../src/game/constan
 import { getProjectileDef } from '../src/game/projectiles.js';
 import { getCharacter } from '../src/game/characters/index.js';
 // スワイプ操作は DOM を触らない部分だけ切り出してあるので、ここで検証できる
-import { GESTURE, SwipeTracker, classifySwipe } from '../src/core/gestures.js';
+import { GESTURE, SWIPE, SwipeTracker, classifySwipe } from '../src/core/gestures.js';
 import { InputManager } from '../src/core/input.js';
 
 let passed = 0;
@@ -939,45 +939,65 @@ function finger(x0 = 200, y0 = 400) {
   };
 }
 
-section('指を離さずに続けて操作する');
+/** 一連の drag で認識されたうち、最後の1件（＝いまの状態）。 */
+const latest = (hits) => hits[hits.length - 1];
+
+section('弾いた距離で歩きと走りを分ける');
 {
   const f = finger();
   check('しきい値未満では何も出ない', f.drag(-14, 0).length === 0);
   const hits = f.drag(-30, 0);
-  check('引き続ければ左スワイプになる', hits.length === 1 && hits[0].gesture === GESTURE.LEFT,
+  check('少し引けば左スワイプになる', hits.length >= 1 && hits[0].gesture === GESTURE.LEFT,
     JSON.stringify(hits));
-  check('1回目はダッシュ要求ではない', hits[0].repeat === false);
+  check('少しの距離は走りに届かない', latest(hits).dist < SWIPE.RUN, `dist=${latest(hits).dist}`);
 }
 
 {
-  // 左 → 指を戻す → 左 でダッシュ。戻しを右スワイプと誤認しないこと
+  // 一気に大きく弾けば、その一回で走りの距離に届く
+  const f = finger();
+  const hits = f.drag(-90, 0);
+  check('大きく引くと走りの距離に届く', latest(hits).dist >= SWIPE.RUN,
+    `dist=${latest(hits).dist.toFixed(1)}`);
+  check('向きは左のまま', latest(hits).gesture === GESTURE.LEFT);
+}
+
+{
+  // 弾いた指をそのまま引き伸ばすと、歩きから走りへ上がる
+  const f = finger();
+  const walk = f.drag(-34, 0);
+  check('まず歩きの距離', latest(walk).dist < SWIPE.RUN, `dist=${latest(walk).dist.toFixed(1)}`);
+  const run = f.drag(-45, 0);
+  check('引き伸ばすと走りの距離になる', latest(run).dist >= SWIPE.RUN,
+    `dist=${latest(run).dist.toFixed(1)}`);
+  check('伸ばしている間も向きは変わらない', latest(run).gesture === GESTURE.LEFT);
+}
+
+{
+  // 戻しを逆向きのスワイプと誤認しないこと
   const f = finger();
   f.drag(-40, 0);
   const back = f.drag(30, 0);
   check('指を戻しただけでは逆向きのスワイプにならない', back.length === 0, JSON.stringify(back));
   const again = f.drag(-30, 0);
-  check('戻してもう一度引くと2回目になる', again.length === 1 && again[0].gesture === GESTURE.LEFT,
+  check('戻してもう一度引けば拾い直す', latest(again).gesture === GESTURE.LEFT,
     JSON.stringify(again));
-  check('同じ向きへ2回でダッシュ要求になる', again[0].repeat === true);
+  check('戻した後の小さい弾きは歩き', latest(again).dist < SWIPE.RUN,
+    `dist=${latest(again).dist.toFixed(1)}`);
 }
 
 {
-  // 間が空いたらダッシュにはならない
-  const f = finger();
-  f.drag(-40, 0);
-  f.drag(30, 0);
-  f.wait(1000);
-  const again = f.drag(-30, 0);
-  check('間が空くとダッシュにはならない', again[0].repeat === false);
-}
-
-{
-  // 横に走らせたまま上へ切り返す（走り → 斜めジャンプ）
+  // 横に動かしたまま上へ切り返す。
+  // 指の動きそのものの向きで判定されること（直前の横移動が混ざらないこと）を見る。
   const f = finger();
   f.drag(40, 0);
-  const up = f.drag(6, -34);
-  check('横から上へ切り返せる', up.length === 1 && up[0].gesture === GESTURE.UP_RIGHT,
-    JSON.stringify(up));
+  const up = f.drag(6, -34); // ほぼ真上
+  check('横から真上へ切り返すと垂直ジャンプ', latest(up).gesture === GESTURE.UP, JSON.stringify(up));
+
+  const g = finger();
+  g.drag(40, 0);
+  const diag = g.drag(26, -34); // はっきり斜め
+  check('横から斜め上へ切り返すと斜めジャンプ', latest(diag).gesture === GESTURE.UP_RIGHT,
+    JSON.stringify(diag));
 }
 
 {
@@ -986,23 +1006,54 @@ section('指を離さずに続けて操作する');
   const down = f.drag(0, 36);
   check('下へ引くとしゃがみ', down[0].gesture === GESTURE.DOWN);
   const side = f.drag(-32, 4);
-  check('しゃがみから横へ切り返せる', side.length === 1 && side[0].gesture === GESTURE.LEFT,
-    JSON.stringify(side));
+  check('しゃがみから横へ切り返せる', latest(side).gesture === GESTURE.LEFT, JSON.stringify(side));
+}
+
+section('横に弾いた直後でもジャンプが出る');
+{
+  // 左へ弾いて歩いた指を離さず、斜め上へ弾く。
+  // 戻しの判定に食われてジャンプが消えないこと、
+  // 置いていかれた基準点のせいで斜めが真上に化けないこと。
+  const cases = [
+    ['真上', 0, -40, GESTURE.UP],
+    ['やや右上', 10, -40, GESTURE.UP],
+    ['斜め右上', 30, -40, GESTURE.UP_RIGHT],
+    ['浅い右上', 40, -25, GESTURE.UP_RIGHT],
+    ['斜め左上', -30, -40, GESTURE.UP_LEFT],
+    ['やや左上', -10, -40, GESTURE.UP],
+  ];
+  for (const [label, dx, dy, want] of cases) {
+    const f = finger();
+    f.drag(-45, 0);
+    const up = f.drag(dx, dy);
+    check(`左へ歩いた直後の${label}スワイプでジャンプ`, up.length > 0 && up[0].gesture === want,
+      up.length ? `=${up[0].gesture} 期待=${want}` : '何も出なかった');
+  }
 }
 
 {
-  // 指を戻さずに長く引き続けた場合も2回目として拾う
+  // 1回の弾きでジャンプが2回入らないこと。
+  // 横の「歩き→走り」は伸びを報告し直して上げるが、それをジャンプにも出すと
+  // 一度弾いただけで2段ジャンプまで消費してしまう。
   const f = finger();
-  f.drag(-30, 0);
-  const far = f.drag(-56, 0);
-  check('戻さず引き続けてもダッシュに入れる', far.length === 1 && far[0].repeat === true,
-    JSON.stringify(far));
+  const up = f.drag(20, -60, 60, 8); // 長めに、細かく刻んで弾く
+  check('長く弾いてもジャンプの報告は1回だけ', up.length === 1, JSON.stringify(up));
+
+  const g = finger();
+  const side = g.drag(-90, 0, 60, 8);
+  check('横は伸ばすぶんだけ報告し直す（歩き→走り）', side.length > 1, JSON.stringify(side));
 }
 
 {
+  // 跳んだあと指を下ろすのを、しゃがみと取り違えないこと
   const f = finger();
-  f.drag(-40, 0);
-  // 指を離せば次のタッチまで何も出ない
+  const up = f.drag(0, -40);
+  check('上へ引くとジャンプ', up[0].gesture === GESTURE.UP);
+  const back = f.drag(0, 30);
+  check('跳んだ後に指を下ろしてもしゃがまない', back.length === 0, JSON.stringify(back));
+}
+
+{
   const t = new SwipeTracker();
   check('触っていなければ動かしても無反応', t.move(0, 0, 0) === null);
 }
@@ -1019,31 +1070,40 @@ section('スワイプから入力ビットへの振り分け');
     return v;
   };
 
-  im._applyMoveSwipe(0, { gesture: GESTURE.LEFT, repeat: false });
-  check('左スワイプで左が押しっぱなしになる', bits() === BTN.LEFT, `bits=${bits()}`);
+  const small = SWIPE.THRESHOLD + 2;
+  const big = SWIPE.RUN + 2;
 
-  im._applyMoveSwipe(0, { gesture: GESTURE.LEFT, repeat: true });
-  check('左2回で左＋DASH になる', bits() === (BTN.LEFT | BTN.DASH), `bits=${bits()}`);
+  im._applyMoveSwipe(0, { gesture: GESTURE.LEFT, dist: small });
+  check('小さく左へ弾くと歩き', bits() === BTN.LEFT, `bits=${bits()}`);
 
-  im._applyMoveSwipe(0, { gesture: GESTURE.LEFT, repeat: false });
-  check('走ったまま同じ向きへ弾いても走りを保つ', bits() === (BTN.LEFT | BTN.DASH),
+  im._applyMoveSwipe(0, { gesture: GESTURE.LEFT, dist: big });
+  check('大きく左へ弾くと走り', bits() === (BTN.LEFT | BTN.DASH), `bits=${bits()}`);
+
+  im._applyMoveSwipe(0, { gesture: GESTURE.LEFT, dist: small });
+  check('また小さく弾けば歩きに戻る', bits() === BTN.LEFT, `bits=${bits()}`);
+
+  im._applyMoveSwipe(0, { gesture: GESTURE.RIGHT, dist: big });
+  check('逆へ大きく弾けば逆へ走る', bits() === (BTN.RIGHT | BTN.DASH), `bits=${bits()}`);
+
+  // 跳ぶための弾きの長さで地上の速さが変わらないこと
+  im._applyMoveSwipe(0, { gesture: GESTURE.UP_RIGHT, dist: small });
+  check('走ったまま斜めジャンプしても走りは保つ', bits() === (BTN.RIGHT | BTN.DASH),
     `bits=${bits()}`);
-
-  im._applyMoveSwipe(0, { gesture: GESTURE.RIGHT, repeat: false });
-  check('逆へ弾くと歩きに戻る', bits() === BTN.RIGHT, `bits=${bits()}`);
-
-  im._applyMoveSwipe(0, { gesture: GESTURE.UP_LEFT, repeat: false });
-  check('斜め上は方向を押しっぱなしにする', bits() === BTN.LEFT, `bits=${bits()}`);
   check('斜め上でジャンプが1フレーム入る', latched() === BTN.UP);
 
-  im._applyMoveSwipe(0, { gesture: GESTURE.UP, repeat: false });
+  im._applyMoveSwipe(0, { gesture: GESTURE.LEFT, dist: small });
+  im._applyMoveSwipe(0, { gesture: GESTURE.UP_LEFT, dist: big });
+  check('歩きから斜めジャンプしても走りにはならない', bits() === BTN.LEFT, `bits=${bits()}`);
+  check('斜め上でジャンプが1フレーム入る（歩きから）', latched() === BTN.UP);
+
+  im._applyMoveSwipe(0, { gesture: GESTURE.UP, dist: small });
   check('真上スワイプは方向を落とす', bits() === 0, `bits=${bits()}`);
   check('真上スワイプでもジャンプは入る', latched() === BTN.UP);
 
-  im._applyMoveSwipe(0, { gesture: GESTURE.DOWN, repeat: false });
+  im._applyMoveSwipe(0, { gesture: GESTURE.DOWN, dist: small });
   check('下スワイプでしゃがみが押しっぱなしになる', bits() === BTN.DOWN, `bits=${bits()}`);
 
-  im._applyMoveSwipe(0, { gesture: GESTURE.RIGHT, repeat: false });
+  im._applyMoveSwipe(0, { gesture: GESTURE.RIGHT, dist: small });
   check('しゃがみから横へ弾くとしゃがみが解ける', bits() === BTN.RIGHT, `bits=${bits()}`);
 }
 

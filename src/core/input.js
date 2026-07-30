@@ -8,7 +8,7 @@
  * （オンライン対戦のときは、相手のビットマスクが通信で届くだけ）
  */
 import { BTN } from '../game/constants.js';
-import { GESTURE, SwipeTracker } from './gestures.js';
+import { GESTURE, SWIPE, SwipeTracker } from './gestures.js';
 
 /** キーボード配列。1台で2人対戦できるように左右で分けてある。 */
 const KEYMAP = [
@@ -232,9 +232,11 @@ export class InputManager {
    * 立ち上がりが二度と来ず、2段ジャンプが出せなくなる）ので、
    * latch に置いて1フレームだけ押されたことにする。
    *
+   * @param {{gesture: string, dist: number}} swipe dist は弾いた距離。
+   *   横は小さく弾けば歩き、大きく弾けば走りになる。
    * @returns {{cue: string, rest: string}} 出す表示と、それが消えた後に戻る表示
    */
-  _applyMoveSwipe(slot, { gesture, repeat }) {
+  _applyMoveSwipe(slot, { gesture, dist }) {
     const held = BTN.LEFT | BTN.RIGHT | BTN.DOWN | BTN.DASH;
     const bits = this.touchBits[slot];
     const dirBit =
@@ -243,23 +245,30 @@ export class InputManager {
         : gesture === GESTURE.RIGHT || gesture === GESTURE.UP_RIGHT
           ? BTN.RIGHT
           : 0;
-    // 同じ向きへ走っている最中なら、指を触れている限り走りを保つ
-    const dashing = repeat || ((bits & BTN.DASH) !== 0 && (bits & dirBit) !== 0);
+    // 同じ向きへ既に走っているか。ジャンプで走りが解けないようにするのに使う
+    const running = (bits & BTN.DASH) !== 0 && (bits & dirBit) !== 0;
     const side = dirBit === BTN.LEFT ? 'Left' : 'Right';
-    const ground = (dashing ? 'dash' : 'walk') + side;
 
     switch (gesture) {
       case GESTURE.LEFT:
-      case GESTURE.RIGHT:
+      case GESTURE.RIGHT: {
+        // 弾いた距離だけで決める。弾いた指をそのまま引き伸ばせば歩き→走りに上がる
+        const dashing = dist >= SWIPE.RUN;
+        const ground = (dashing ? 'dash' : 'walk') + side;
         this.touchBits[slot] = (bits & ~held) | dirBit | (dashing ? BTN.DASH : 0);
         return { cue: ground, rest: ground };
+      }
 
       case GESTURE.UP_LEFT:
-      case GESTURE.UP_RIGHT:
+      case GESTURE.UP_RIGHT: {
+        // 跳ぶための弾きの長さで地上の速さまで変わると分かりづらいので、
+        // 走っていたならそのまま走りを保つ（着地してまた走れる）
+        const ground = (running ? 'dash' : 'walk') + side;
         // ジャンプと同じフレームに方向が要る（跳んだ瞬間の向きで軌道が決まる）
-        this.touchBits[slot] = (bits & ~held) | dirBit | (dashing ? BTN.DASH : 0);
+        this.touchBits[slot] = (bits & ~held) | dirBit | (running ? BTN.DASH : 0);
         this.latch[slot] |= BTN.UP;
         return { cue: 'jump' + side, rest: ground };
+      }
 
       case GESTURE.UP:
         // 方向を落として真上に跳ぶ
@@ -320,8 +329,11 @@ export class InputManager {
    * 押しっぱなしの状態（歩き・走り・しゃがみ・ガード）の表示に戻す。
    */
   _showCue(el, cue, { cue: name, rest }) {
-    clearTimeout(cue.timer);
     cue.rest = rest;
+    // 押しっぱなしの状態が続いているだけなら触らない。
+    // 指を滑らせている間は同じ状態が何度も届くので、毎回出し直すとちらつく。
+    if (name === rest && el.dataset.cue === name) return;
+    clearTimeout(cue.timer);
     this._setCue(el, name);
     if (name === rest) return;
     cue.timer = setTimeout(() => this._setCue(el, cue.rest), CUE_PULSE_MS);
