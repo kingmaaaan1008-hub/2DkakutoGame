@@ -10,6 +10,12 @@ import { getProjectileDef } from '../game/projectiles.js';
 import { drawFighterSprite, drawStillFrame } from './spritebank.js';
 import { drawStage } from './stage.js';
 
+/** '#rrggbb' を 'r,g,b' にする。rgba() の中で透明度だけ差し替えたいときに使う。 */
+function hexToRgb(hex) {
+  const v = parseInt(hex.replace('#', ''), 16);
+  return `${(v >> 16) & 255},${(v >> 8) & 255},${v & 255}`;
+}
+
 /** 地面から画面上端までに見えるワールド単位。キャラの画面占有率を決める。 */
 const VIEW_ABOVE = 440;
 /**
@@ -159,7 +165,7 @@ export class Renderer {
     for (const fx of sim.effects) if (GROUND_EFFECTS.has(fx.type)) this._drawEffect(fx, sim);
     const order = sim.fighters.slice().sort((p, q) => p.y - q.y);
     for (const f of order) this._drawFighter(f);
-    for (const p of sim.projectiles) this._drawProjectile(p);
+    for (const p of sim.projectiles) this._drawProjectile(p, sim);
     for (const fx of sim.effects) if (!GROUND_EFFECTS.has(fx.type)) this._drawEffect(fx, sim);
 
     if (this.debug) this._drawDebug(sim);
@@ -253,10 +259,10 @@ export class Renderer {
     ctx.restore();
   }
 
-  _drawProjectile(p) {
+  _drawProjectile(p, sim) {
     const def = getProjectileDef(p.type);
     if (def.style === 'sprite') {
-      this._drawSpriteProjectile(p, def);
+      this._drawSpriteProjectile(p, def, sim);
       return;
     }
     if (def.style === 'beam') {
@@ -295,17 +301,27 @@ export class Renderer {
 
   /**
    * スプライトで描く飛び道具（女子高生の彼氏）。
-   * 走り込んできて、当たる間際にタックルの絵へ切り替える。
+   *
+   * 走ってきて、相手に届きそうになったらタックルの構えに変わる。
+   * 切り替えを経過フレームではなく**相手との距離**で決めているので、
+   * どこで呼んでも「走ってきて、届く直前に跳び込む」形になる。
+   * タックルのコマも距離で進めるため、詰めるほど跳び込みが深くなる。
    */
-  _drawSpriteProjectile(p, def) {
+  _drawSpriteProjectile(p, def, sim) {
     const sprite = this.sprites[def.sheet];
     if (!sprite) return;
     const cam = this.cam;
-    // 走り込みが終わったらタックルの絵に切り替える
-    const animName = p.age >= (def.runFrames ?? 0) ? def.anims.hit : def.anims.run;
+    const target = sim?.fighters?.[1 - p.owner];
+    const gap = target ? Math.abs(target.x - p.x) : Infinity;
+    const range = def.tackleRange ?? 0;
+    const lunging = range > 0 && gap <= range;
+
+    const animName = lunging ? def.anims.hit : def.anims.run;
     const cell = sprite.animations[animName];
     if (!cell) return;
-    const index = Math.floor((p.age * (def.animFps ?? 14)) / 60) % cell.frames;
+    const index = lunging
+      ? Math.min(cell.frames - 1, Math.floor((1 - gap / range) * cell.frames))
+      : Math.floor((p.age * (def.animFps ?? 14)) / 60) % cell.frames;
     drawStillFrame(
       this.ctx,
       sprite,
@@ -321,55 +337,74 @@ export class Renderer {
   /**
    * スマホカメラのレーザー。
    *
-   * 判定は細長い箱だが、そのまま塗ると板にしか見えないので
-   *   1. 上下を減衰させた薄い光（外側）
-   *   2. 白い芯（中央）
-   *   3. 進行方向の先端だけ強く光らせる
-   * の 3 枚で光条に見せている。
+   * 血しぶきとは逆に、**ここは加算合成が正しい**。血は光らないので
+   * source-over で描いているが、レーザーは光そのものなので、
+   * 背景に足し合わさらないと嘘になる。
+   *
+   * 実物のビームに寄せるために効いているのは次の 4 つ。
+   *
+   * | | やっていること | これが無いと |
+   * |---|---|---|
+   * | 断面を楕円の放射グラデーションに | 光を長円へ引き伸ばして減衰させる | 帯を重ねると段が見えて「板」になる |
+   * | 芯を丸端の線で描く | lineCap: round の 1 本線 | 端が角ばって、切り落とした棒に見える |
+   * | 芯だけ白く飛ばす | 中心の彩度を捨てる | 明るいだけの色帯になる。強い光は白飛びする |
+   * | 進行方向へ伸ばして向ける | 1 フレーム進む距離ぶん尾を引き、速度の角度に回す | 止まって見える／斜めに撃っても光は水平のまま |
    */
   _drawLaser(p, def) {
     const cam = this.cam;
     const ctx = this.ctx;
-    const sx = cam.toScreenX(p.x);
-    const sy = cam.toScreenY(p.y);
-    const halfW = ((def.box?.w ?? def.radius * 2) / 2) * cam.zoom;
-    const halfH = ((def.box?.h ?? def.radius * 2) / 2) * cam.zoom;
-    // 撃った直後は短い。伸びきってから一定になる
-    const grow = Math.min(1, (p.age + 1) / 5);
-    const w = halfW * grow;
-    const dir = p.facing >= 0 ? 1 : -1;
+    const speed = Math.hypot(p.vx, p.vy) || 1;
+    // 進行方向。画面の y は世界と上下が逆なので符号を返す
+    const angle = Math.atan2(-p.vy, p.vx);
+    // 芯の太さ。判定の高さより細く見せる（判定は当たり方の都合で少し太い）
+    const core = Math.max(1.2, def.box.h * 0.3 * cam.zoom);
+    // 撃った直後は短い。1 フレームで進む距離ぶんの尾を足して伸びを出す
+    const grow = Math.min(1, (p.age + 1) / 4);
+    const head = (def.box.w / 2) * cam.zoom * grow;
+    const tail = head + speed * 2.1 * cam.zoom * grow;
+    // わずかな明滅。完全に一定だと CG くさくなる
+    const flicker = 0.86 + 0.14 * Math.sin(p.age * 1.7);
+    const rgb = hexToRgb(def.color);
 
     ctx.save();
-    ctx.translate(sx, sy);
+    ctx.translate(cam.toScreenX(p.x), cam.toScreenY(p.y));
+    ctx.rotate(angle);
+    ctx.globalCompositeOperation = 'lighter';
 
-    // 外側の光。上下は減衰させて、輪郭を出さない
-    const soft = ctx.createLinearGradient(0, -halfH * 1.5, 0, halfH * 1.5);
-    soft.addColorStop(0, 'rgba(255,111,208,0)');
-    soft.addColorStop(0.5, def.color);
-    soft.addColorStop(1, 'rgba(255,111,208,0)');
-    ctx.globalAlpha = 0.6;
-    ctx.fillStyle = soft;
-    ctx.fillRect(-w, -halfH * 1.5, w * 2, halfH * 3);
+    // 外側の光。単位円の放射グラデーションを長円へ引き伸ばすことで、
+    // 縦にも横にも段の出ない減衰になる
+    const halo = (rx, ry, alpha) => {
+      ctx.save();
+      ctx.translate((head - tail) / 2, 0);
+      ctx.scale(rx, ry);
+      const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+      g.addColorStop(0, `rgba(${rgb},0.85)`);
+      g.addColorStop(0.45, `rgba(${rgb},0.3)`);
+      g.addColorStop(1, `rgba(${rgb},0)`);
+      ctx.globalAlpha = alpha * flicker;
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(0, 0, 1, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    };
+    halo((tail + head) / 2, core * 4.2, 0.5);
+    halo((tail + head) / 2, core * 1.9, 0.65);
 
-    // 芯。後ろへ細く尾を引く
-    const core = ctx.createLinearGradient(-w * dir, 0, w * dir, 0);
-    core.addColorStop(0, 'rgba(255,255,255,0)');
-    core.addColorStop(0.45, 'rgba(255,255,255,0.85)');
-    core.addColorStop(1, '#ffffff');
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = core;
-    ctx.fillRect(-w, -halfH * 0.3, w * 2, halfH * 0.6);
-
-    // 先端の光点
-    const tipX = w * dir;
-    const tip = ctx.createRadialGradient(tipX, 0, 0, tipX, 0, halfH * 1.6);
-    tip.addColorStop(0, 'rgba(255,255,255,0.95)');
-    tip.addColorStop(0.5, def.color);
-    tip.addColorStop(1, 'rgba(255,111,208,0)');
-    ctx.fillStyle = tip;
+    // 芯。丸端の線なので、端が角ばらない。強い光は白く飛ぶので色を捨てる
+    const hot = ctx.createLinearGradient(-tail, 0, head, 0);
+    hot.addColorStop(0, 'rgba(255,255,255,0)');
+    hot.addColorStop(0.55, 'rgba(255,255,255,0.75)');
+    hot.addColorStop(1, '#ffffff');
+    ctx.globalAlpha = flicker;
+    ctx.strokeStyle = hot;
+    ctx.lineWidth = core;
+    ctx.lineCap = 'round';
     ctx.beginPath();
-    ctx.arc(tipX, 0, halfH * 1.6, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.moveTo(-tail, 0);
+    ctx.lineTo(head, 0);
+    ctx.stroke();
+
     ctx.restore();
   }
 

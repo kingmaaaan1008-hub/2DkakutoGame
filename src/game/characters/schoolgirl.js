@@ -86,7 +86,8 @@ export default {
       total: 28,
       animFps: 14,
       hits: [],
-      spawns: [{ frame: 8, type: 'laser', dir: { x: 0.82, y: -0.57 }, origin: { x: 40, y: 96 } }],
+      // 発射位置は地上と同じスマホの位置。空中でも手から出るように見せる
+      spawns: [{ frame: 8, type: 'laser', dir: { x: 0.82, y: -0.57 }, origin: { x: 50, y: 167 } }],
     },
 
     // 空中スキル: 空中からでも彼氏を呼べる。跳び越えながら呼ぶと、

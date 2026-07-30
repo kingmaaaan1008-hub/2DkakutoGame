@@ -645,6 +645,11 @@ section('女子高生');
   check('スマホからレーザーが出る', laser?.type === 'laser', `proj=${laser?.type}`);
   check('レーザーは真っ直ぐ前へ飛ぶ', laser.vx > 0 && laser.vy === 0,
     `vx=${laser?.vx.toFixed(1)} vy=${laser?.vy.toFixed(1)}`);
+  // 発射位置は掲げたスマホの高さ（実測 167）。胸の高さから出ていると
+  // 手ではなく体から出ているように見えてしまう
+  check('掲げたスマホの高さから出る', laser.y - p1.y > 150 && laser.y - p1.y < 185,
+    `高さ=${(laser.y - p1.y).toFixed(0)}`);
+  check('発射位置は体より前', laser.x > p1.x + 30, `前方=${(laser.x - p1.x).toFixed(0)}`);
 
   const y0 = laser.y;
   run(sim, 10, 0);
@@ -731,6 +736,19 @@ section('女子高生');
   const shot = sim.projectiles[0];
   check('空中レーザーは斜め下へ飛ぶ', shot && shot.vx > 0 && shot.vy < 0,
     `vx=${shot?.vx.toFixed(1)} vy=${shot?.vy.toFixed(1)}`);
+  check('空中でもスマホの高さから出る', shot.y - p1.y > 150 && shot.y - p1.y < 185,
+    `高さ=${(shot.y - p1.y).toFixed(0)}`);
+}
+
+{
+  // 彼氏の絵の切り替えは「相手との距離」で決めている。
+  // 経過フレームで切り替えると、呼んだ位置によって突進の見た目がずれる。
+  const { PROJECTILES } = await import('../src/game/projectiles.js');
+  const bf = PROJECTILES.boyfriend;
+  check('彼氏は距離で走り→突進に切り替える', bf.tackleRange > 0, `range=${bf.tackleRange}`);
+  check('切り替えは判定が届く手前で起きる', bf.tackleRange > bf.box.w / 2,
+    `range=${bf.tackleRange} 判定幅の半分=${bf.box.w / 2}`);
+  check('走りと突進の両方の絵を持つ', !!bf.anims.run && !!bf.anims.hit);
 }
 
 // ── 空中攻撃 ────────────────────────────────────────────────
