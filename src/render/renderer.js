@@ -357,11 +357,13 @@ export class Renderer {
     // 進行方向。画面の y は世界と上下が逆なので符号を返す
     const angle = Math.atan2(-p.vy, p.vx);
     // 芯の太さ。判定の高さより細く見せる（判定は当たり方の都合で少し太い）
-    const core = Math.max(1.2, def.box.h * 0.3 * cam.zoom);
-    // 撃った直後は短い。1 フレームで進む距離ぶんの尾を足して伸びを出す
-    const grow = Math.min(1, (p.age + 1) / 4);
-    const head = (def.box.w / 2) * cam.zoom * grow;
-    const tail = head + speed * 2.1 * cam.zoom * grow;
+    const core = Math.max(1, def.box.h * 0.26 * cam.zoom);
+    const head = (def.box.w / 2) * cam.zoom;
+    // 尾は**発射点より後ろへは伸ばさない**。
+    // 光は出た場所より手前には存在しないので、撃った直後に長い尾を描くと
+    // スマホや手に光が被って、そこから出ているように見えなくなる。
+    const travelled = p.age * speed * cam.zoom;
+    const tail = Math.min(head + speed * 2.1 * cam.zoom, Math.max(0, travelled - head));
     // わずかな明滅。完全に一定だと CG くさくなる
     const flicker = 0.86 + 0.14 * Math.sin(p.age * 1.7);
     const rgb = hexToRgb(def.color);

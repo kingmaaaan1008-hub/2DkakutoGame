@@ -649,7 +649,9 @@ section('女子高生');
   // 手ではなく体から出ているように見えてしまう
   check('掲げたスマホの高さから出る', laser.y - p1.y > 150 && laser.y - p1.y < 185,
     `高さ=${(laser.y - p1.y).toFixed(0)}`);
-  check('発射位置は体より前', laser.x > p1.x + 30, `前方=${(laser.x - p1.x).toFixed(0)}`);
+  // スマホ本体は前端が 52 あたり。そこより前から出さないと光が本体に被る
+  check('発射位置はスマホの前端より先', laser.x - p1.x > 52,
+    `前方=${(laser.x - p1.x).toFixed(0)}`);
 
   const y0 = laser.y;
   run(sim, 10, 0);
@@ -709,6 +711,63 @@ section('女子高生');
   run(sim, 1, BTN.SKILL);
   for (let i = 0; i < 140 && p2.health > 0; i += 1) run(sim, 1, 0, BTN.GUARD);
   check('彼氏はガードしていても当たる', p2.health === 0, `hp=${p2.health}`);
+}
+
+{
+  // 彼氏は当てても消えず、そのまま走り抜ける。
+  // ぶつかった瞬間に消えると「弾が当たった」ようにしか見えない。
+  const sim = newSim(['schoolgirl', 'swordsman']);
+  place(sim, 400, 1000);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.SKILL);
+  let hitAt = -1;
+  let xAtHit = 0;
+  for (let i = 0; i < 220 && hitAt < 0; i += 1) {
+    run(sim, 1, 0);
+    if (p2.health === 0) {
+      hitAt = i;
+      xAtHit = sim.projectiles.find((p) => p.type === 'boyfriend')?.x ?? -1;
+    }
+  }
+  check('当てた時点でも彼氏はまだ場にいる', xAtHit > 0, `x=${xAtHit}`);
+  run(sim, 40, 0);
+  const after = sim.projectiles.find((p) => p.type === 'boyfriend');
+  check('当てたあとも走り続ける', after && after.x > xAtHit + 200,
+    `${xAtHit.toFixed(0)} → ${after ? after.x.toFixed(0) : '消滅'}`);
+  check('当てたあとは判定が切れている', after?.spent === true);
+}
+
+{
+  // 走り抜ける間に何度も当たらない
+  const sim = newSim(['schoolgirl', 'berserker']);
+  place(sim, 400, 900);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.SKILL);
+  let hits = 0;
+  let prev = p2.health;
+  for (let i = 0; i < 220; i += 1) {
+    run(sim, 1, 0);
+    if (p2.health < prev) {
+      hits += 1;
+      prev = p2.health;
+    }
+  }
+  check('走り抜けても当たるのは一度だけ', hits === 1, `ヒット回数=${hits}`);
+}
+
+{
+  // 空中で呼んでも彼氏は地面を走る（空を走らない）
+  const sim = newSim(['schoolgirl', 'swordsman']);
+  place(sim, 500, 1100);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 10, 0);
+  check('女子高生は浮いている', p1.y > 100, `y=${p1.y.toFixed(0)}`);
+  run(sim, 1, BTN.SKILL);
+  for (let i = 0; i < 25 && sim.projectiles.length === 0; i += 1) run(sim, 1, 0);
+  const bf = sim.projectiles.find((p) => p.type === 'boyfriend');
+  check('空中で呼んでも彼氏は地面から走る', bf && bf.y === 0, `y=${bf?.y}`);
+  check('空中で呼んでも横に走る（落ちてこない）', bf && bf.vy === 0, `vy=${bf?.vy}`);
 }
 
 {

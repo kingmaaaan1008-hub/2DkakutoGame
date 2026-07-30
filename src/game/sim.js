@@ -221,12 +221,19 @@ export class Simulation {
       type: spawn.type,
       owner: fighter.index,
       x: fighter.x + fighter.facing * origin.x,
-      y: fighter.y + origin.y,
+      // groundBound のものは呼んだ高さに関係なく地面から出る
+      // （空中で呼んだ彼氏が空を走らないように）
+      y: (def.groundBound ? 0 : fighter.y) + origin.y,
       vx: (fighter.facing * def.speed * dir.x) / len,
       vy: (def.speed * dir.y) / len,
       facing: fighter.facing,
       life: def.lifetime,
       age: 0,
+      /**
+       * 当てたあとも残るもの（彼氏）用。true になると判定が切れる。
+       * 走り抜ける間に何度も当たらないようにするため。
+       */
+      spent: false,
     });
   }
 
@@ -265,7 +272,7 @@ export class Simulation {
         p.life <= 0 || p.x < -60 || p.x > STAGE_WIDTH + 60 || p.y < (def.floorY ?? -40);
 
       // ダウン中の相手は弾もすり抜ける（消えずに通過する）
-      if (!remove && !target.isKO && !target.invulnerable && target.hitstop === 0) {
+      if (!remove && !p.spent && !target.isKO && !target.invulnerable && target.hitstop === 0) {
         // 既定は radius の正方形。box を持つものはその寸法で当てる
         // （レーザーのように細長いもの、彼氏のように人ひとりぶんのもの用）。
         // box.y は箱の下端を p.y からどれだけ上に置くか。省略すると中央になる。
@@ -280,6 +287,8 @@ export class Simulation {
         if (boxesOverlap(box, target.hurtBox())) {
           target.receiveHit(def, p.x, p.facing, this.fighters[p.owner], this);
           if (def.destroyOnHit) remove = true;
+          // 消えないものは、そのまま走り抜けられるように判定だけ切る
+          else p.spent = true;
         }
       }
 
