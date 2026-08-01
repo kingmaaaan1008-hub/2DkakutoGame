@@ -29,17 +29,21 @@ export default {
   jumpVx: 4.6,
   weight: 0.9,
 
+  // 走りと倒れは描き直した v2 シート（run2 / death2）を使う。
+  // 元シートの run / death はアトラスに載せていない（tools/build-assets.ps1 の skip）。
   anims: {
     idle: 'idle',
     walk: 'walk',
-    dash: 'run',
+    dash: 'run2',
     jump: 'jump',
     fall: 'fall',
     land: 'land',
     guard: 'guard',
     crouch: 'crouch',
     hurt: 'hurt',
-    death: 'death',
+    death: 'death2',
+    /** 掴まれている姿。淫魔の吸血に捕らえられたときに使う。 */
+    grabbed: 'grabbed',
   },
 
   attackMove: 'photoLaser',

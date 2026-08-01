@@ -163,7 +163,12 @@ export class Renderer {
     // 魔法陣は足元に敷くものなので、キャラより先に描いて下に潜らせる。
     for (const f of sim.fighters) this._drawShadow(f);
     for (const fx of sim.effects) if (GROUND_EFFECTS.has(fx.type)) this._drawEffect(fx, sim);
-    const order = sim.fighters.slice().sort((p, q) => p.y - q.y);
+    // 低い方から重ねる。ただし掴まれている側は必ず先に（＝奥に）描く。
+    // 掴まれた相手は宙に浮くので y 順だと手前に来てしまい、
+    // 吸っている淫魔が相手の陰に完全に隠れてしまうため。
+    const order = sim.fighters
+      .slice()
+      .sort((p, q) => (q.isGrabbed ? 1 : 0) - (p.isGrabbed ? 1 : 0) || p.y - q.y);
     for (const f of order) this._drawFighter(f);
     for (const p of sim.projectiles) this._drawProjectile(p, sim);
     for (const fx of sim.effects) if (!GROUND_EFFECTS.has(fx.type)) this._drawEffect(fx, sim);
@@ -303,24 +308,30 @@ export class Renderer {
    * スプライトで描く飛び道具（女子高生の彼氏）。
    *
    * 走ってきて、相手に届く間合いに入ったらタックルの絵に変わり、
-   * 出し切ったらまた走りに戻って走り抜けていく。
+   * 最終コマまで来たらそのコマのまま滑って止まり、また走り出して走り抜けていく。
    *
    * **タックルは繰り返さない。** 突進のシートは 1 回ぶんの動きなので、
    * 突進に入ってからの経過フレーム（sim が数えている lungeAge）で
    * 頭から 1 回だけ再生する。相手との距離でコマを決めると、
    * 追い越したあとに距離が開いてコマが逆戻りし、2 周したように見えてしまう。
+   *
+   * 走りに戻る合図は sim 側の lungeDone。「滑って止まりきったか」は
+   * 速さの話なので、コマ数からは決められない。
    */
   _drawSpriteProjectile(p, def, sim) {
     const sprite = this.sprites[def.sheet];
     if (!sprite) return;
     const cam = this.cam;
     const tackle = sprite.animations[def.anims.hit];
+    // 滑っている間は最終コマで止める（コマ送りだけ先に進めない）
     const tackleFrame =
-      p.lungeAge >= 0 && tackle
-        ? Math.floor((p.lungeAge * (def.tackleFps ?? def.animFps ?? 14)) / 60)
+      p.lungeAge >= 0 && tackle?.frames > 0
+        ? Math.min(
+            Math.floor((p.lungeAge * (def.tackleFps ?? def.animFps ?? 14)) / 60),
+            tackle.frames - 1
+          )
         : -1;
-    // 出し切ったら走りに戻る（そのまま走り抜けていく）
-    const lunging = tackleFrame >= 0 && tackleFrame < (tackle?.frames ?? 0);
+    const lunging = tackleFrame >= 0 && !p.lungeDone;
 
     const animName = lunging ? def.anims.hit : def.anims.run;
     const cell = sprite.animations[animName];

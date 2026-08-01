@@ -150,12 +150,14 @@ export function profileOf(def) {
     let travel = 0;
     let startup = Infinity;
     let projectile = false;
+    let grab = false;
     let offset = 0;
     let total = 0;
     for (let guard = 0; move && guard < 4; guard += 1) {
       for (const h of move.hits) {
         reach = Math.max(reach, h.box.x + h.box.w);
         startup = Math.min(startup, offset + h.start);
+        if (h.grab) grab = true;
       }
       // 踏み込む技は移動ぶんだけ遠くまで届く。
       // 剣士のタックルは判定リーチ 142 でも、182 前進するので実際は 324 届く。
@@ -183,6 +185,11 @@ export function profileOf(def) {
       startup: Number.isFinite(startup) ? startup : total,
       total,
       projectile,
+      /**
+       * 掴み技か。ガードされていても通る代わりに、
+       * **相手が空中にいると絶対に当たらない**ので、振る条件が普通の技と違う。
+       */
+      grab,
     };
   };
 
@@ -377,12 +384,29 @@ export class CpuController {
   /**
    * 跳べば頭の上を通せる攻撃か。しゃがみの逆で、判定が低いところに
    * 収まっているならジャンプで越えられる。ガード一択にしないための逃げ道。
+   *
+   * 掴みだけは判定の高さに関係なく、浮いてさえいれば当たらない。
+   * 箱の高さで測ると淫魔の吸血は「跳べない」と出てしまうので、先に分ける。
    */
   _isJumpable(opponent) {
     const hits = this._upcomingHits(opponent);
     if (hits.length === 0) return false;
+    if (hits.every((h) => h.grab)) return true;
     const lift = opponent.y;
     return hits.every((h) => h.box.y + h.box.h + lift < JUMP_CLEAR_Y);
+  }
+
+  /**
+   * これから来るのが掴みか。
+   *
+   * ガードは一切通らないので、この判断を持っていないと CPU は
+   * 「一番確実な答え」としてガードを固め、そのまま毎回捕まる。
+   * 判定が混在する技は普通の打撃として扱う（ガードする価値が残るため）。
+   */
+  _incomingGrab(opponent) {
+    if (opponent.state !== STATE.MOVE) return false;
+    const hits = this._upcomingHits(opponent);
+    return hits.length > 0 && hits.every((h) => h.grab);
   }
 
   /** 相手の判定が出るまでの残りフレーム。もう出ているなら 0。 */
@@ -409,6 +433,16 @@ export class CpuController {
    * まだ何も守っていないのに危険が目前なら、考え直す方がよい。
    */
   _mustRethink(sim, me, foe) {
+    // 掴みだけは「守りの手を選んであるから大丈夫」が成立しない。
+    // ガードもしゃがみも通用しないので、固めたまま維持すると毎回そのまま捕まる。
+    // すでに跳んでいるなら答えは合っているので、そのまま続けさせる。
+    if ((this.plan.bits & BTN.UP) === 0 && this._incomingGrab(foe)) {
+      const until = this._framesUntilHit(foe);
+      if (until >= RETREAT_ESCAPE_FRAMES && Math.abs(foe.x - me.x) <= this._threatRange(foe) + 40) {
+        return true;
+      }
+    }
+
     const defending = (this.plan.bits & (BTN.GUARD | BTN.UP | BTN.DOWN)) !== 0;
     if (defending) return false;
     const shot = this._incomingProjectile(sim, me);
@@ -527,6 +561,14 @@ export class CpuController {
     const prof = profileOf(me.def);
     const hitRange = prof.attack.range;
     const skillRange = prof.skill.range;
+    /**
+     * いまスキルを振ってよいか。
+     *
+     * 掴みは相手が空中にいると絶対に当たらないので、跳ばれている間に振るのは
+     * 「外して長い硬直を晒す」だけになる。逆にガードは無視して通るので、
+     * 固めている相手には打撃系の崩しより価値が高い。
+     */
+    const skillUsable = !(prof.skill.grab && foe.airborne);
     // 遠距離キャラは離れて弾を撒くのが仕事
     const ranged = prof.attack.projectile;
     const idealRange = ranged ? 430 : hitRange * 0.85;
@@ -609,9 +651,14 @@ export class CpuController {
       const opts = [];
       // 判定が出るまでの残り。逃げる手はこれが足りていないと間に合わない
       const until = this._framesUntilHit(foe);
+      // 掴みはガードで防げない。跳ぶのが唯一の答えになる
+      const grabbing = this._incomingGrab(foe);
 
-      // ガードは一番確実。ただしこれ一択にすると、崩し技を置かれて終わる
-      opts.push({ act: 'guard', bits: BTN.GUARD, ticks: 12, weight: cfg.guard * 5 });
+      // ガードは一番確実。ただしこれ一択にすると、崩し技を置かれて終わる。
+      // 掴みに対してだけはまったくの無駄なので出さない。
+      if (!grabbing) {
+        opts.push({ act: 'guard', bits: BTN.GUARD, ticks: 12, weight: cfg.guard * 5 });
+      }
 
       // ビームのように高いところだけを薙ぐ攻撃は、しゃがめばくぐれる。
       // ガード不能なので、くぐれるなら最優先
@@ -619,15 +666,23 @@ export class CpuController {
         opts.push({ act: 'duck', bits: BTN.DOWN, ticks: 50, weight: cfg.guard * 14 });
       }
       // 判定が低いところに収まっているなら跳んで越える。
-      // ただし跳び上がるまでに判定が来ると、そのまま食らうだけになる
+      // ただし跳び上がるまでに判定が来ると、そのまま食らうだけになる。
+      // 掴み相手はこれが唯一の答えなので、ビームをしゃがむのと同じ重みで最優先する。
       if (this._isJumpable(foe) && until >= JUMP_ESCAPE_FRAMES) {
-        opts.push({ act: 'jumpIn', bits: BTN.UP | toFoe, ticks: 8, weight: jumpW(cfg.guard * 1.6) });
-        opts.push({ act: 'retreat', bits: BTN.UP | away, ticks: 8, weight: jumpW(cfg.guard * 1) });
+        const w = grabbing ? cfg.guard * 14 : cfg.guard * 1.6;
+        opts.push({ act: 'jumpIn', bits: BTN.UP | toFoe, ticks: 8, weight: jumpW(w) });
+        opts.push({ act: 'retreat', bits: BTN.UP | away, ticks: 8, weight: jumpW(w * 0.6) });
       }
       // 間合いの端で受けているなら、下がれば空振りにできる。
-      // これも下がり切る時間が要る
-      if (threat - dist < 70 && until >= RETREAT_ESCAPE_FRAMES) {
-        opts.push({ act: 'retreat', bits: away | BTN.DASH, ticks: 12, weight: cfg.spacing * 2.5 });
+      // これも下がり切る時間が要る。
+      // 掴みは間合いが短いので、跳ぶ時間が無いときはこれが次善の手になる。
+      if ((grabbing || threat - dist < 70) && until >= RETREAT_ESCAPE_FRAMES) {
+        opts.push({
+          act: 'retreat',
+          bits: away | BTN.DASH,
+          ticks: 12,
+          weight: cfg.spacing * (grabbing ? 4 : 2.5),
+        });
       }
       // 相手の発生より自分の発生が速いなら、割り込んだ方が勝つ
       if (dist <= hitRange && until > prof.attack.startup + 3) {
@@ -643,7 +698,7 @@ export class CpuController {
       if (dist <= hitRange && open >= prof.attack.startup) {
         opts.push({ act: 'attack', bits: BTN.ATTACK, ticks: 6, weight: cfg.punish * 5 });
       }
-      if (dist <= skillRange && open >= prof.skill.startup + 4 && this.cooldown === 0) {
+      if (dist <= skillRange && open >= prof.skill.startup + 4 && this.cooldown === 0 && skillUsable) {
         // 大技が確定で入る場面。一番おいしい
         opts.push({
           act: 'skill',
@@ -680,15 +735,16 @@ export class CpuController {
     }
     // スキルはガードを崩せる代わりに発生が遅く、外すと大きな隙になる。
     // 固める相手か、出し切るまで踏み込まれない距離のときだけ。
-    if (dist <= skillRange && this.cooldown === 0) {
+    if (dist <= skillRange && this.cooldown === 0 && skillUsable) {
       const slow = prof.skill.startup > SLOW_STARTUP;
       if (this._turtling(foe)) {
-        // 打撃が通らないので、崩すならこれしかない
+        // 打撃が通らないので、崩すならこれしかない。
+        // 掴みは相手が地上に居座っている限り必ず通るので、さらに重く見る。
         opts.push({
           act: 'skill',
           bits: BTN.SKILL,
           ticks: 6,
-          weight: cfg.crush * 6,
+          weight: cfg.crush * (prof.skill.grab ? 10 : 6),
           cooldown: slow ? 90 : 60,
         });
       } else if (dist > hitRange * 0.7) {

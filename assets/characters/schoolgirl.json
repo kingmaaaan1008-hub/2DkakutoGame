@@ -1,8 +1,8 @@
 {
   "id": "schoolgirl",
   "image": "schoolgirl.webp",
-  "atlasWidth": 1440,
-  "atlasHeight": 2332,
+  "atlasWidth": 1432,
+  "atlasHeight": 2554,
   "sourceFps": 10,
   "scale": 0.34904,
   "height": 200,
@@ -27,19 +27,9 @@
       "ay": 193.72,
       "src": "jkgirl"
     },
-    "run": {
-      "x": 0,
-      "y": 403,
-      "cw": 107,
-      "ch": 190,
-      "frames": 8,
-      "ax": 52.57,
-      "ay": 190.23,
-      "src": "jkgirl"
-    },
     "jump": {
       "x": 0,
-      "y": 593,
+      "y": 403,
       "cw": 116,
       "ch": 239,
       "frames": 8,
@@ -49,7 +39,7 @@
     },
     "fall": {
       "x": 0,
-      "y": 832,
+      "y": 642,
       "cw": 109,
       "ch": 160,
       "frames": 5,
@@ -59,7 +49,7 @@
     },
     "land": {
       "x": 0,
-      "y": 992,
+      "y": 802,
       "cw": 94,
       "ch": 188,
       "frames": 8,
@@ -69,7 +59,7 @@
     },
     "guard": {
       "x": 0,
-      "y": 1180,
+      "y": 990,
       "cw": 100,
       "ch": 193,
       "frames": 8,
@@ -79,7 +69,7 @@
     },
     "hurt": {
       "x": 0,
-      "y": 1373,
+      "y": 1183,
       "cw": 92,
       "ch": 191,
       "frames": 8,
@@ -87,19 +77,9 @@
       "ay": 191.62,
       "src": "jkgirl"
     },
-    "death": {
-      "x": 0,
-      "y": 1564,
-      "cw": 180,
-      "ch": 192,
-      "frames": 8,
-      "ax": 94.81,
-      "ay": 188.83,
-      "src": "jkgirl"
-    },
     "point": {
       "x": 0,
-      "y": 1756,
+      "y": 1374,
       "cw": 102,
       "ch": 191,
       "frames": 8,
@@ -109,7 +89,7 @@
     },
     "photo": {
       "x": 0,
-      "y": 1947,
+      "y": 1565,
       "cw": 103,
       "ch": 192,
       "frames": 8,
@@ -119,13 +99,43 @@
     },
     "crouch": {
       "x": 0,
-      "y": 2139,
+      "y": 1757,
       "cw": 98,
       "ch": 193,
       "frames": 8,
       "ax": 51.96,
       "ay": 190.23,
       "src": "jkgirl_crouch"
+    },
+    "run2": {
+      "x": 0,
+      "y": 1950,
+      "cw": 105,
+      "ch": 192,
+      "frames": 8,
+      "ax": 56.24,
+      "ay": 188.83,
+      "src": "jkgirl_v2"
+    },
+    "death2": {
+      "x": 0,
+      "y": 2142,
+      "cw": 179,
+      "ch": 199,
+      "frames": 8,
+      "ax": 94.98,
+      "ay": 185.69,
+      "src": "jkgirl_v2"
+    },
+    "grabbed": {
+      "x": 0,
+      "y": 2341,
+      "cw": 66,
+      "ch": 213,
+      "frames": 8,
+      "ax": 39.7,
+      "ay": 209.77,
+      "src": "jkgirl_grabbed"
     }
   }
 }

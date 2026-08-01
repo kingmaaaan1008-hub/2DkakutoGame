@@ -2,7 +2,7 @@
   "id": "berserker",
   "image": "berserker.webp",
   "atlasWidth": 2080,
-  "atlasHeight": 3146,
+  "atlasHeight": 3384,
   "sourceFps": 10,
   "scale": 0.44379,
   "height": 225,
@@ -146,6 +146,16 @@
       "ax": 78,
       "ay": 201.48,
       "src": "berserker_crouch"
+    },
+    "grabbed": {
+      "x": 0,
+      "y": 3146,
+      "cw": 150,
+      "ch": 238,
+      "frames": 8,
+      "ax": 64.74,
+      "ay": 233.43,
+      "src": "berserker_grabbed"
     }
   }
 }

@@ -37,37 +37,56 @@ $GROUNDRATIO = 0.12  # a row counts as "the character" at 12% of the busiest row
 #                characters whose upper body leans far off their feet; it fails
 #                on wide stances where one boot sits higher than the other.
 # dx / dy      : manual nudge in source px, applied after the automatic anchor
+# skip         : animations in that sheet to leave out of the atlas, for poses
+#                that were redrawn on a later sheet and are no longer used
 $CONFIG = @(
   @{
     id = 'swordsman'; targetHeight = 215; anchorMetric = 'body'
     sheets = @(
-      @{ file = 'swordsman';        ref = 'idle';   dx = 0; dy = 0 },
-      @{ file = 'swordsman_extra';  ref = 'land';   dx = 0; dy = 0 },
-      @{ file = 'swordsman_crouch'; ref = 'crouch'; dx = 0; dy = 0 }
+      @{ file = 'swordsman';         ref = 'idle';    dx = 0; dy = 0 },
+      @{ file = 'swordsman_extra';   ref = 'land';    dx = 0; dy = 0 },
+      @{ file = 'swordsman_crouch';  ref = 'crouch';  dx = 0; dy = 0 },
+      @{ file = 'swordsman_grabbed'; ref = 'grabbed'; dx = 0; dy = 0 }
     )
   },
   @{
     id = 'berserker'; targetHeight = 225; anchorMetric = 'body'
     sheets = @(
-      @{ file = 'berserker';        ref = 'idle';   dx = 0; dy = 0 },
-      @{ file = 'berserker_crouch'; ref = 'crouch'; dx = 0; dy = 0 }
+      @{ file = 'berserker';         ref = 'idle';    dx = 0; dy = 0 },
+      @{ file = 'berserker_crouch';  ref = 'crouch';  dx = 0; dy = 0 },
+      @{ file = 'berserker_grabbed'; ref = 'grabbed'; dx = 0; dy = 0 }
     )
   },
   @{
     id = 'mage'; targetHeight = 212; anchorMetric = 'body'
     sheets = @(
-      @{ file = 'mage';        ref = 'idle';   dx = 0; dy = 0 },
-      @{ file = 'mage_extra';  ref = 'guard';  dx = 0; dy = 0 },
-      @{ file = 'mage_crouch'; ref = 'crouch'; dx = 0; dy = 0 }
+      @{ file = 'mage';         ref = 'idle';    dx = 0; dy = 0 },
+      @{ file = 'mage_extra';   ref = 'guard';   dx = 0; dy = 0 },
+      @{ file = 'mage_crouch';  ref = 'crouch';  dx = 0; dy = 0 },
+      @{ file = 'mage_grabbed'; ref = 'grabbed'; dx = 0; dy = 0 }
     )
   },
   @{
     # jkgirl_extra holds 'point' (the skill cue) and 'photo' (the laser).
+    # jkgirl_v2 holds the redrawn 'run2' / 'death2', which is what the game uses
+    # for dashing and dying, so the base sheet's 'run' / 'death' are skipped.
     id = 'schoolgirl'; targetHeight = 200; anchorMetric = 'body'
     sheets = @(
-      @{ file = 'jkgirl';        ref = 'idle';   dx = 0; dy = 0 },
-      @{ file = 'jkgirl_extra';  ref = 'point';  dx = 0; dy = 0 },
-      @{ file = 'jkgirl_crouch'; ref = 'crouch'; dx = 0; dy = 0 }
+      @{ file = 'jkgirl';         ref = 'idle';    dx = 0; dy = 0; skip = @('run', 'death') },
+      @{ file = 'jkgirl_extra';   ref = 'point';   dx = 0; dy = 0 },
+      @{ file = 'jkgirl_crouch';  ref = 'crouch';  dx = 0; dy = 0 },
+      @{ file = 'jkgirl_v2';      ref = 'run2';    dx = 0; dy = 0 },
+      @{ file = 'jkgirl_grabbed'; ref = 'grabbed'; dx = 0; dy = 0 }
+    )
+  },
+  @{
+    # The succubus. 'grabbed' rides on the base sheet (she can be grabbed in a
+    # mirror match), so only the attack and crouch sheets are separate.
+    id = 'succubus'; targetHeight = 205; anchorMetric = 'body'
+    sheets = @(
+      @{ file = 'succubus';        ref = 'idle';   dx = 0; dy = 0 },
+      @{ file = 'succubus_attack'; ref = 'claw1';  dx = 0; dy = 0 },
+      @{ file = 'succubus_crouch'; ref = 'crouch'; dx = 0; dy = 0 }
     )
   },
   @{
@@ -139,6 +158,10 @@ foreach ($cfg in $CONFIG) {
   foreach ($L in $loaded) {
     foreach ($p in $L.meta.animations.PSObject.Properties) {
       $name = $p.Name
+      if ($L.cfg.skip -and ($L.cfg.skip -contains $name)) {
+        Write-Host "  skip $($L.cfg.file)/$name"
+        continue
+      }
       if ($rows | Where-Object { $_.name -eq $name }) {
         throw "$($cfg.id): animation name '$name' appears in more than one sheet"
       }

@@ -2,7 +2,7 @@
   "id": "swordsman",
   "image": "swordsman.webp",
   "atlasWidth": 2176,
-  "atlasHeight": 3149,
+  "atlasHeight": 3397,
   "sourceFps": 10,
   "scale": 0.52826,
   "height": 215,
@@ -136,6 +136,16 @@
       "ax": 118.07,
       "ay": 214.47,
       "src": "swordsman_crouch"
+    },
+    "grabbed": {
+      "x": 0,
+      "y": 3149,
+      "cw": 216,
+      "ch": 248,
+      "frames": 8,
+      "ax": 96.08,
+      "ay": 241.94,
+      "src": "swordsman_grabbed"
     }
   }
 }

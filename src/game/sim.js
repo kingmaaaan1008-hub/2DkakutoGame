@@ -20,7 +20,7 @@ import {
 import { Fighter, PUSHBOX_W } from './fighter.js';
 import { toWorldBox, boxesOverlap } from './moves.js';
 import { getCharacter } from './characters/index.js';
-import { getProjectileDef, isProjectile, homeToward } from './projectiles.js';
+import { getProjectileDef, isProjectile, homeToward, stepLunge } from './projectiles.js';
 import { Rng } from '../core/rng.js';
 
 /** ラウンド開始時の立ち位置（ステージ中央からの距離）。 */
@@ -139,6 +139,9 @@ export class Simulation {
   _separate() {
     const [a, b] = this.fighters;
     if (a.isKO || b.isKO) return;
+    // 掴んでいる間は密着したままにする。ここで押し離すと、
+    // 掴まれた側の固定位置が毎ティック引き剥がされて絵が震える。
+    if (a.isGrabbed || b.isGrabbed) return;
     const dx = b.x - a.x;
     const overlap = PUSHBOX_W - Math.abs(dx);
     if (overlap <= 0) return;
@@ -163,7 +166,10 @@ export class Simulation {
     const attacker = this.fighters[ai];
     const defender = this.fighters[di];
     // ダウン中は無敵。追撃で起き上がりを潰し続けられないようにする。
-    if (defender.isKO || defender.invulnerable || attacker.hitstop > 0) return;
+    // 例外は「自分が掴んでいる相手」で、掴んだ本人だけは判定を通せる
+    // （吸い終わりの一撃を当てるため。横槍は入らないままになる）。
+    const heldByMe = defender.grabbedBy === ai;
+    if (defender.isKO || (defender.invulnerable && !heldByMe) || attacker.hitstop > 0) return;
 
     const hits = attacker.activeHits();
     if (hits.length === 0) return;
@@ -172,10 +178,19 @@ export class Simulation {
     for (const hit of hits) {
       const box = toWorldBox(hit.box, attacker.x, attacker.y, attacker.facing);
       if (!boxesOverlap(box, hurt)) continue;
+      // 掴みは跳んでいる相手には当たらない。
+      // ガードには勝つが跳ばれると負ける、という択にするための一行。
+      if (hit.grab && defender.airborne) continue;
+
       // 同じ group は 1回の技中に 1度だけ当たる
       attacker.usedGroups.push(hit.group);
       attacker.moveHitLanded = true;
-      defender.receiveHit(hit, attacker.x, attacker.facing, attacker, this);
+      if (hit.grab) defender.receiveGrab(attacker, hit, this);
+      else defender.receiveHit(hit, attacker.x, attacker.facing, attacker, this);
+
+      // 当たったときだけ切り替わる技（掴み → 保持）
+      const move = attacker.currentMove();
+      if (move?.onHit) attacker.startMove(move.onHit, defender);
       break; // 1ティックに1発まで
     }
   }
@@ -241,6 +256,13 @@ export class Simulation {
        * コマが逆戻りし、2 周したように見えてしまう。
        */
       lungeAge: -1,
+      /**
+       * 突進を出し切って滑り、止まってから走り出したか。
+       * true になると絵が走りに戻り、また元の速さまで加速する。
+       */
+      lungeDone: false,
+      /** 滑り終えて止まってからの経過フレーム。 */
+      stopAge: 0,
     });
   }
 
@@ -270,6 +292,9 @@ export class Simulation {
         else if (p.lungeAge >= 0) p.lungeAge += 1;
       }
 
+      // 突進 → 滑って止まる → 走り出す。速さだけここで決まる
+      stepLunge(p, def);
+
       if (def.turnRate > 0 && !target.isKO) {
         // 胴体の中心あたりを狙う。しゃがまれたらそのぶん低く狙い直す
         // （固定値だと、しゃがんだ相手の頭上を素通りしてしまう）
@@ -280,10 +305,19 @@ export class Simulation {
       p.y += p.vy;
       p.age += 1;
       p.life -= 1;
-      p.facing = p.vx >= 0 ? 1 : -1;
+      // 止まっている間（彼氏が滑り終えたところ）は向きを据え置く。
+      // 0 を右向き扱いにすると、左へ走っていた彼氏が止まった瞬間に振り返る。
+      if (p.vx !== 0) p.facing = p.vx > 0 ? 1 : -1;
 
-      let remove =
-        p.life <= 0 || p.x < -60 || p.x > STAGE_WIDTH + 60 || p.y < (def.floorY ?? -40);
+      // 画面外へ出たら消す。ただし彼氏のように画面外から走り込んでくるものは、
+      // **進む先の画面外**でだけ消す。出てきた側の外でも消すと、壁際で呼んだ彼氏が
+      // 出た瞬間に消えて、スキルがまるごと空振りになってしまう。
+      const offStage = def.entersOffStage
+        ? p.vx < 0
+          ? p.x < -60
+          : p.x > STAGE_WIDTH + 60
+        : p.x < -60 || p.x > STAGE_WIDTH + 60;
+      let remove = p.life <= 0 || p.y < (def.floorY ?? -40) || offStage;
 
       // ダウン中の相手は弾もすり抜ける（消えずに通過する）
       if (!remove && !p.spent && !target.isKO && !target.invulnerable && target.hitstop === 0) {

@@ -40,6 +40,13 @@
  *                                 （knockdown 時は省略すると既定の打ち上げになる）
  * @property {number} group        同じ group の判定は 1 回の技中に 1 度しか当たらない。
  *                                 多段技は group を変えて並べる。
+ * @property {boolean} grab        true なら掴み。のけぞらせるのではなく相手を捕らえる。
+ *                                 **ガードを completely 無視して通る**代わりに、
+ *                                 **跳んでいる相手には当たらない**。
+ *                                 guardBreak（ガードごと殴る）とはここが違っていて、
+ *                                 「ガードには勝つが、ジャンプには負ける」という
+ *                                 逆向きの択を作るための判定。
+ *                                 捕らえたあとの保持位置は move 側の grabHold で決める。
  */
 
 const HIT_DEFAULTS = {
@@ -53,6 +60,7 @@ const HIT_DEFAULTS = {
   knockdown: false,
   launch: null,
   group: 0,
+  grab: false,
 };
 
 const MOVE_DEFAULTS = {
@@ -97,6 +105,18 @@ const MOVE_DEFAULTS = {
    * 2 つに分けて書くためのもの。入力は要らず、必ず繋がる。
    */
   onEnd: null,
+  /**
+   * 判定が**当たった瞬間**に切り替わる技の id。onEnd の「当たっても外しても繋ぐ」に対して、
+   * こちらは当たったときだけ繋ぐ。掴み技を「捕らえにいく技」と「捕らえたあとの技」に
+   * 分けて書くためのもので、外したときは元の技がそのまま最後まで再生される（＝隙になる）。
+   */
+  onHit: null,
+  /**
+   * 掴んだ相手を保持する位置 {x, y}（自分の足元原点・前方向が正）。
+   * この指定がある技を出している間だけ相手は掴まれたままで、
+   * 技が終わるか中断されると落ちる。掴み判定そのものは hit 側の grab で出す。
+   */
+  grabHold: null,
 };
 
 /**
@@ -135,6 +155,13 @@ export function defineMoves(table) {
   for (const move of Object.values(out)) {
     if (move.onEnd && !out[move.onEnd]) {
       throw new Error(`技 "${move.id}": onEnd の繋ぎ先 "${move.onEnd}" がありません`);
+    }
+    if (move.onHit && !out[move.onHit]) {
+      throw new Error(`技 "${move.id}": onHit の繋ぎ先 "${move.onHit}" がありません`);
+    }
+    // 掴んだあとに保持できない技だと、捕らえた相手を置き去りにしてしまう
+    if (move.hits.some((h) => h.grab) && !move.onHit) {
+      throw new Error(`技 "${move.id}": grab 判定を持つ技には onHit（捕らえたあとの技）が必要です`);
     }
     for (const c of move.chains) {
       if (!out[c.move]) throw new Error(`技 "${move.id}": 連携先 "${c.move}" がありません`);

@@ -110,6 +110,12 @@ export const STATE = {
   HIT: 'hit',
   BLOCK: 'block',
   GUARD_BREAK: 'guardBreak',
+  /**
+   * 掴まれている。掴んだ側の技が終わる（または中断される）まで、
+   * 位置も向きも掴んだ側に固定されて一切動けない。
+   * 掴んだ本人以外からは無敵なので、掴み中に横槍が入ることはない。
+   */
+  GRABBED: 'grabbed',
   DOWN: 'down',
   KO: 'ko',
 };

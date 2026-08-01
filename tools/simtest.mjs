@@ -8,8 +8,16 @@
  *   npm test
  */
 import { Simulation } from '../src/game/sim.js';
-import { BTN, STATE, ROUND_INTRO_TICKS, CROUCH_TICKS } from '../src/game/constants.js';
-import { getProjectileDef } from '../src/game/projectiles.js';
+import {
+  BTN,
+  STATE,
+  ROUND_INTRO_TICKS,
+  CROUCH_TICKS,
+  STAGE_MARGIN,
+  STAGE_WIDTH,
+  GRAVITY,
+} from '../src/game/constants.js';
+import { getProjectileDef, lungeSlideTick } from '../src/game/projectiles.js';
 import { getCharacter } from '../src/game/characters/index.js';
 // スワイプ操作は DOM を触らない部分だけ切り出してあるので、ここで検証できる
 import { GESTURE, SWIPE, SwipeTracker, classifySwipe } from '../src/core/gestures.js';
@@ -730,11 +738,96 @@ section('女子高生');
     }
   }
   check('当てた時点でも彼氏はまだ場にいる', xAtHit > 0, `x=${xAtHit}`);
-  run(sim, 40, 0);
+  run(sim, 90, 0);
   const after = sim.projectiles.find((p) => p.type === 'boyfriend');
   check('当てたあとも走り続ける', after && after.x > xAtHit + 200,
     `${xAtHit.toFixed(0)} → ${after ? after.x.toFixed(0) : '消滅'}`);
   check('当てたあとは判定が切れている', after?.spent === true);
+}
+
+{
+  // 突進を出し切ったら、最終コマのまま慣性で滑って止まる。
+  // 止まりきってから走り出し、そのまま走り抜けていく。
+  const sim = newSim(['schoolgirl', 'swordsman']);
+  place(sim, 400, 1000);
+  const def = getProjectileDef('boyfriend');
+  const slideAt = lungeSlideTick(def);
+  run(sim, 1, BTN.SKILL);
+
+  const find = () => sim.projectiles.find((p) => p.type === 'boyfriend');
+  for (let i = 0; i < 220 && (find()?.lungeAge ?? -1) < 0; i += 1) run(sim, 1, 0);
+  const bf = find();
+  check('間合いに入ると突進に入る', bf?.lungeAge === 0, `lungeAge=${bf?.lungeAge}`);
+  check('突進の踏み込みは速さが落ちない', Math.abs(bf.vx) === def.speed, `vx=${bf?.vx}`);
+
+  // 最終コマの手前まで踏み込む（滑り出すのは最終コマに入ったティックから）
+  run(sim, slideAt - 1, 0);
+  check('最終コマまでは全速のまま', Math.abs(find().vx) === def.speed, `vx=${find()?.vx}`);
+
+  // そこから滑って止まるまで
+  let slid = 0;
+  const xSlideStart = find().x;
+  for (let i = 0; i < 60 && find() && find().vx !== 0; i += 1) {
+    run(sim, 1, 0);
+    slid += 1;
+  }
+  const stopped = find();
+  check('最終コマから滑って止まる', stopped && stopped.vx === 0, `vx=${stopped?.vx}`);
+  check('滑るのは一瞬ではない', slid > 8 && slid < 45, `${slid}F`);
+  check('滑った距離はひと足ぶん', stopped.x - xSlideStart > 40, `${(stopped.x - xSlideStart).toFixed(0)}px`);
+  check('止まっている間はまだ突進の絵', stopped.lungeDone === false);
+  check('止まっても向きは変わらない', stopped.facing === 1, `facing=${stopped.facing}`);
+
+  // 止まったら走り出す
+  const xStop = stopped.x;
+  run(sim, def.stopTicks, 0);
+  check('一拍おいて走り出す', find()?.lungeDone === true);
+  run(sim, 20, 0);
+  const running = find();
+  check('走り出したら元の速さまで戻る', Math.abs(running.vx - def.speed) < 0.001, `vx=${running?.vx}`);
+  check('止まった位置から走り抜けていく', running.x > xStop + 100,
+    `${xStop.toFixed(0)} → ${running.x.toFixed(0)}`);
+
+  // 最後は画面外まで走り抜けて消える
+  run(sim, 200, 0);
+  check('走り抜けて消える', !find());
+}
+
+{
+  // 壁際で呼んでも彼氏は出る。
+  // 彼氏は 300 後ろから走ってくるので、壁を背負っていると出現位置が画面外になる。
+  // 弾と同じに画面外で消していた頃は、ここでスキルがまるごと空振りになっていた。
+  const sim = newSim(['schoolgirl', 'swordsman']);
+  place(sim, STAGE_MARGIN, STAGE_WIDTH - STAGE_MARGIN);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.SKILL);
+
+  const find = () => sim.projectiles.find((p) => p.type === 'boyfriend');
+  for (let i = 0; i < 30 && !find(); i += 1) run(sim, 1, 0);
+  const bf = find();
+  check('壁際だと彼氏は画面外に出てくる', bf && bf.x < -60, `x=${bf?.x.toFixed(0)}`);
+  run(sim, 10, 0);
+  check('出てきた側の画面外では消えない', !!find(), `n=${sim.projectiles.length}`);
+
+  for (let i = 0; i < 330 && p2.health > 0; i += 1) run(sim, 1, 0);
+  check('壁際で呼んでも端の相手まで届く', p2.health === 0, `hp=${p2.health}`);
+}
+
+{
+  // 走り抜けた先の画面外まで行ったら、そこで消える（寿命を待たずに次を呼べる）
+  const sim = newSim(['schoolgirl', 'berserker']);
+  place(sim, 400, 700);
+  const def = getProjectileDef('boyfriend');
+  run(sim, 1, BTN.SKILL);
+  const find = () => sim.projectiles.find((p) => p.type === 'boyfriend');
+  for (let i = 0; i < 30 && !find(); i += 1) run(sim, 1, 0);
+
+  let last = null;
+  for (let i = 0; i < def.lifetime && find(); i += 1) {
+    last = find().x;
+    run(sim, 1, 0);
+  }
+  check('走り抜けた先の画面外で消える', last > STAGE_WIDTH, `最後のx=${last?.toFixed(0)}`);
 }
 
 {
@@ -808,13 +901,16 @@ section('女子高生');
   check('切り替えは判定が届く手前で起きる', bf.tackleRange > bf.box.w / 2,
     `range=${bf.tackleRange} 判定幅の半分=${bf.box.w / 2}`);
   check('走りと突進の両方の絵を持つ', !!bf.anims.run && !!bf.anims.hit);
-  // 突進のシートは 1 回ぶんの動き。出し切る時間が、突進の間合いを詰める
-  // 時間とだいたい合っていないと、ぶつかる前後で絵が足りない／余る
-  const crossFrames = bf.tackleRange / bf.speed;
-  const playFrames = (8 * 60) / bf.tackleFps; // 8 コマ
-  check('突進を出し切る時間が間合いを詰める時間と釣り合う',
-    playFrames > crossFrames && playFrames < crossFrames * 1.6,
-    `出し切り=${playFrames.toFixed(0)}F 詰め=${crossFrames.toFixed(0)}F`);
+  // 突進のシートは 1 回ぶんの動き。**踏み込みの絵が出ている間に触っていないと**、
+  // 走りの絵のまま体当たりしたように見える。触るのは間合いを判定の半幅ぶん詰めたところ。
+  const touchFrames = (bf.tackleRange - bf.box.w / 2) / bf.speed;
+  const playFrames = (bf.tackleFrames * 60) / bf.tackleFps;
+  check('ぶつかるのは突進を出し切る前',
+    playFrames > touchFrames,
+    `出し切り=${playFrames.toFixed(0)}F 触るまで=${touchFrames.toFixed(0)}F`);
+  // 逆に長すぎると、当たったあともいつまでも踏み込みの絵が残る
+  check('突進の絵が余りすぎない', playFrames < touchFrames * 2,
+    `出し切り=${playFrames.toFixed(0)}F 触るまで=${touchFrames.toFixed(0)}F`);
 }
 
 {
@@ -841,6 +937,226 @@ section('女子高生');
     `並び=${ages.slice(0, 6).join(',')}…`);
   check('突進を出し切るだけ数えている', ages[ages.length - 1] >= 22,
     `最終=${ages[ages.length - 1]}`);
+}
+
+// ── 淫魔（飛行） ────────────────────────────────────────────
+section('淫魔の飛行');
+{
+  // 1・2段目は他のキャラと同じ跳び上がり。3段目から先が滞空になる。
+  const sim = newSim(['succubus', 'swordsman']);
+  const p1 = sim.fighters[0];
+  const { flight } = p1.def;
+
+  run(sim, 1, BTN.UP);
+  check('1段目は普通に跳び上がる', p1.vy > 0, `vy=${p1.vy.toFixed(2)}`);
+
+  run(sim, 24, 0);
+  run(sim, 1, BTN.UP);
+  check('2段目も跳び上がる', p1.vy > 0, `vy=${p1.vy.toFixed(2)}`);
+
+  // 3段目 = 滞空。高度は上がらない
+  run(sim, 24, 0);
+  const yBefore = p1.y;
+  run(sim, 1, BTN.UP);
+  // 滞空は毎ティック vy を 0 に戻して重力を打ち消す作りなので、
+  // ティックの終わりに残る vy は 1 ティックぶんの重力（負）になる。
+  // 見るべきは「上向きの初速が付いていないこと」。
+  check('3段目は跳び上がらない', p1.vy <= 0, `vy=${p1.vy.toFixed(2)}`);
+  check('3段目は滞空に入る', p1.hoverTicks > 0, `hover=${p1.hoverTicks}`);
+
+  run(sim, 20, 0);
+  check('滞空中は高度が変わらない', Math.abs(p1.y - yBefore) < 0.001,
+    `y ${yBefore.toFixed(2)} -> ${p1.y.toFixed(2)}`);
+  check('滞空中の絵は fly', p1.anim.name === 'fly', `anim=${p1.anim.name}`);
+
+  // 滞空中は左右に動ける
+  const xBefore = p1.x;
+  run(sim, 10, BTN.LEFT);
+  check('滞空中は左右に動ける', p1.x < xBefore - 20, `x ${xBefore.toFixed(1)} -> ${p1.x.toFixed(1)}`);
+  check('滞空中に横移動しても高度は変わらない', Math.abs(p1.y - yBefore) < 0.001,
+    `y=${p1.y.toFixed(2)}`);
+
+  // 滞空は時間切れで落下に戻る（30ティックぶん浮いたので残りはこれだけ）
+  run(sim, flight.ticks - 30, 0);
+  check('滞空の残りが尽きる', p1.hoverTicks === 0, `hover=${p1.hoverTicks}`);
+  run(sim, 4, 0);
+  check('滞空が切れると落ち始める', p1.vy < -GRAVITY && p1.y < yBefore,
+    `vy=${p1.vy.toFixed(2)} y ${yBefore.toFixed(2)} -> ${p1.y.toFixed(2)}`);
+}
+
+{
+  // 合計 5 段まで。6 段目は受け付けない。
+  const sim = newSim(['succubus', 'swordsman']);
+  const p1 = sim.fighters[0];
+
+  run(sim, 1, BTN.UP);
+  for (let n = 2; n <= 5; n += 1) {
+    run(sim, 6, 0);
+    run(sim, 1, BTN.UP);
+    check(`${n}段目まで跳べる`, p1.y > 0 && (p1.vy > 0 || p1.hoverTicks > 0),
+      `vy=${p1.vy.toFixed(2)} hover=${p1.hoverTicks}`);
+  }
+  check('5段使い切ると残りが 0', p1.airJumps === 0, `airJumps=${p1.airJumps}`);
+
+  // 6段目は出ない（滞空も跳び上がりも起きない）
+  run(sim, 50, 0);
+  const hoverBefore = p1.hoverTicks;
+  run(sim, 1, BTN.UP);
+  check('6段目は受け付けない', p1.vy < 0 && p1.hoverTicks === hoverBefore,
+    `vy=${p1.vy.toFixed(2)} hover=${p1.hoverTicks}`);
+
+  // 着地すれば戻る
+  for (let i = 0; i < 200 && p1.y > 0; i += 1) run(sim, 1, 0);
+  run(sim, 12, 0);
+  check('着地で飛行の回数が戻る', p1.airJumps === 0 && p1.state !== STATE.JUMP,
+    `airJumps=${p1.airJumps} state=${p1.state}`);
+  run(sim, 1, BTN.UP);
+  check('着地後にまた跳べる', p1.airJumps === p1.def.airJumps,
+    `airJumps=${p1.airJumps}`);
+}
+
+{
+  // 滞空から急降下へ繋げられる（技を出すと滞空は終わる）
+  const sim = newSim(['succubus', 'swordsman']);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 20, 0);
+  run(sim, 1, BTN.UP);
+  run(sim, 20, 0);
+  run(sim, 1, BTN.UP);
+  check('滞空している', p1.hoverTicks > 0, `hover=${p1.hoverTicks}`);
+  run(sim, 1, BTN.SKILL);
+  check('滞空から急降下を出せる', p1.moveId === 'diveKick', `move=${p1.moveId}`);
+  check('技を出すと滞空は終わる', p1.hoverTicks === 0, `hover=${p1.hoverTicks}`);
+  run(sim, 8, 0);
+  check('急降下は落ちていく', p1.vy < 0, `vy=${p1.vy.toFixed(2)}`);
+}
+
+// ── 淫魔（掴み） ────────────────────────────────────────────
+section('淫魔の吸血');
+{
+  // ガードしていても掴まれる
+  const sim = newSim(['succubus', 'swordsman']);
+  place(sim, 800, 890);
+  const [p1, p2] = sim.fighters;
+
+  run(sim, 1, BTN.SKILL, BTN.GUARD);
+  check('スキルで掴みが出る', p1.moveId === 'drainCatch', `move=${p1.moveId}`);
+
+  for (let i = 0; i < 30 && !p2.isGrabbed; i += 1) run(sim, 1, 0, BTN.GUARD);
+  check('ガードしていても掴まれる', p2.isGrabbed, `state=${p2.state}`);
+  check('掴んだ側は保持の技へ移る', p1.moveId === 'drainHold', `move=${p1.moveId}`);
+  check('掴まれた時点で致命傷', p2.doomed && p2.health === 0,
+    `doomed=${p2.doomed} hp=${p2.health}`);
+
+  // 保持位置に固定される
+  const hold = p1.def.moves.drainHold.grabHold;
+  run(sim, 10, 0, BTN.GUARD);
+  check('掴まれた相手は宙に浮く', p2.y === hold.y, `y=${p2.y}`);
+  check('掴まれた相手は目の前に固定される',
+    Math.abs(p2.x - (p1.x + p1.facing * hold.x)) < 0.001,
+    `x=${p2.x.toFixed(1)} 期待=${(p1.x + p1.facing * hold.x).toFixed(1)}`);
+  check('掴まれた相手は掴んだ側を向く', p2.facing === -p1.facing,
+    `p1=${p1.facing} p2=${p2.facing}`);
+  check('掴まれている間の絵は grabbed', p2.anim.name === 'grabbed', `anim=${p2.anim.name}`);
+
+  const heldX = p2.x;
+  run(sim, 10, 0, BTN.LEFT | BTN.GUARD);
+  check('掴まれている間は逃げられない', Math.abs(p2.x - heldX) < 0.001,
+    `x ${heldX.toFixed(1)} -> ${p2.x.toFixed(1)}`);
+
+  // 吸い切ると投げ捨てられて決着
+  for (let i = 0; i < 200 && !p2.isKO; i += 1) run(sim, 1, 0, BTN.GUARD);
+  check('吸い切ると倒れる', p2.isKO, `state=${p2.state}`);
+  check('掴みは解けている', p2.grabbedBy === -1, `grabbedBy=${p2.grabbedBy}`);
+}
+
+{
+  // 跳ばれると掴めない ＝ ジャンプが掴みへの答え
+  const sim = newSim(['succubus', 'swordsman']);
+  place(sim, 800, 890);
+  const [p1, p2] = sim.fighters;
+
+  // 相手を先に跳ばせてから掴みにいく
+  run(sim, 1, 0, BTN.UP);
+  run(sim, 6, 0, 0);
+  check('相手は空中にいる', p2.airborne, `y=${p2.y.toFixed(1)}`);
+
+  run(sim, 1, BTN.SKILL);
+  run(sim, 24, 0);
+  check('跳んでいる相手は掴めない', !p2.isGrabbed && !p2.doomed,
+    `state=${p2.state} doomed=${p2.doomed}`);
+  check('掴みは空振りして終わる', p1.moveId === 'drainCatch' || p1.state !== STATE.MOVE,
+    `move=${p1.moveId} state=${p1.state}`);
+}
+
+{
+  // 外したら硬直が残る（振り切るまで動けない）
+  const sim = newSim(['succubus', 'swordsman']);
+  place(sim, 600, 1100); // 届かない間合い
+  const [p1] = sim.fighters;
+  const total = p1.def.moves.drainCatch.total;
+
+  run(sim, 1, BTN.SKILL);
+  run(sim, total - 4, BTN.RIGHT);
+  check('掴みを外すと技が最後まで残る', p1.state === STATE.MOVE && p1.moveId === 'drainCatch',
+    `state=${p1.state} move=${p1.moveId}`);
+  run(sim, 8, 0);
+  check('振り切れば動けるようになる', p1.state !== STATE.MOVE, `state=${p1.state}`);
+}
+
+{
+  // 掴んでいる最中に掴んだ側が倒されたら、掴まれた側は落とされる
+  const sim = newSim(['succubus', 'swordsman']);
+  place(sim, 800, 890);
+  const [p1, p2] = sim.fighters;
+
+  run(sim, 1, BTN.SKILL);
+  for (let i = 0; i < 30 && !p2.isGrabbed; i += 1) run(sim, 1, 0);
+  check('掴めている（前提）', p2.isGrabbed, `state=${p2.state}`);
+
+  // 掴んでいる側を強制的に技から降ろす。
+  // 掴んだ瞬間はヒットストップが入っているので、明けるまで数ティック待つ。
+  p1._toIdle();
+  for (let i = 0; i < 20 && p2.isGrabbed; i += 1) run(sim, 1, 0);
+  check('掴みが中断されると落とされる', !p2.isGrabbed && p2.grabbedBy === -1,
+    `state=${p2.state} grabbedBy=${p2.grabbedBy}`);
+  // 致命傷は負ったままなので、落ちきれば決着する
+  for (let i = 0; i < 200 && !p2.isKO; i += 1) run(sim, 1, 0);
+  check('落とされた相手はそのまま倒れる', p2.isKO, `state=${p2.state}`);
+}
+
+{
+  // 引っ掻きは 2 段に繋がる。
+  // 当ててしまうとヒットストップで技が止まって窓の検証にならないので、
+  // わざと届かない間合いから振る。
+  const sim = newSim(['succubus', 'swordsman']);
+  place(sim, 700, 1150);
+  const [p1] = sim.fighters;
+
+  run(sim, 1, BTN.ATTACK);
+  check('攻撃で引っ掻きが出る', p1.moveId === 'claw1', `move=${p1.moveId}`);
+  run(sim, 9, 0);
+  run(sim, 1, BTN.ATTACK);
+  check('引っ掻きは2段目に繋がる', p1.moveId === 'claw2', `move=${p1.moveId}`);
+}
+
+{
+  // ロスター全員をちゃんと掴めること。掴まれ用の絵が無いキャラがいると
+  // ここで落ちる（同キャラ戦があるので淫魔自身も対象）。
+  const { CHARACTER_IDS } = await import('../src/game/characters/index.js');
+  for (const id of CHARACTER_IDS) {
+    const sim = newSim(['succubus', id]);
+    place(sim, 800, 890);
+    const [p1, p2] = sim.fighters;
+
+    run(sim, 1, BTN.SKILL, BTN.GUARD);
+    for (let i = 0; i < 40 && !p2.isGrabbed; i += 1) run(sim, 1, 0, BTN.GUARD);
+    check(`${p2.def.name}を掴める`, p2.isGrabbed, `state=${p2.state}`);
+
+    for (let i = 0; i < 250 && !p2.isKO; i += 1) run(sim, 1, 0, BTN.GUARD);
+    check(`${p2.def.name}を吸い切って倒せる`, p2.isKO, `state=${p2.state}`);
+  }
 }
 
 // ── 空中攻撃 ────────────────────────────────────────────────
@@ -1031,6 +1347,33 @@ section('決定性');
     return JSON.stringify(sim.save());
   })();
   check('巻き戻し後の再実行が一致する', a === b);
+}
+
+{
+  // 飛行と掴みも巻き戻せる（hoverTicks / grabbedBy が save に乗っているか）。
+  // ここが抜けていると、オンライン対戦で滞空中や掴み中に巻き戻したときだけ
+  // 状態がずれる、という見つけにくい壊れ方をする。
+  const sim = new Simulation({ characters: ['succubus', 'schoolgirl'], seed: 7 });
+  const script = [];
+  for (let i = 0; i < 500; i += 1) {
+    script.push([
+      (i % 13 === 0 ? BTN.UP : 0) | (i % 37 === 0 ? BTN.SKILL : 0) | (i % 5 < 2 ? BTN.RIGHT : 0),
+      (i % 19 === 0 ? BTN.ATTACK : 0) | (i % 9 < 3 ? BTN.LEFT : 0),
+    ]);
+  }
+  for (const inputs of script.slice(0, 200)) sim.step(inputs);
+  const snapshot = sim.save();
+  const expected = JSON.stringify(snapshot);
+  for (const inputs of script.slice(200, 300)) sim.step(inputs);
+  sim.load(snapshot);
+  check('淫魔でも save/load で巻き戻せる', JSON.stringify(sim.save()) === expected);
+
+  const replay = () => {
+    sim.load(snapshot);
+    for (const inputs of script.slice(200)) sim.step(inputs);
+    return JSON.stringify(sim.save());
+  };
+  check('淫魔の巻き戻し後の再実行が一致する', replay() === replay());
 }
 
 // ── ダッシュビット ──────────────────────────────────────────
@@ -1512,6 +1855,74 @@ section('CPU の立ち回り');
 
 // 飛び道具は撃った本人と切り離して飛ぶので、技のモーションを見ているだけでは
 // 気づけない。ここを見落とすと、CPU は弾に向かって歩いて当たりに行く。
+section('CPU の掴みへの対応');
+{
+  const { profileOf, CpuController } = await import('../src/game/ai.js');
+
+  const succ = profileOf(getCharacter('succubus'));
+  const sword = profileOf(getCharacter('swordsman'));
+  check('淫魔のスキルは掴みだと読める', succ.skill.grab === true);
+  check('打撃系のスキルは掴み扱いにならない', sword.skill.grab === false);
+  check('引っ掻きは掴みではない', succ.attack.grab === false);
+
+  // 掴みは「跳べば避けられる技」として読めていること。
+  // 判定の高さで測ると吸血の箱は高いので、ここを分けていないと false になる。
+  {
+    const sim = newSim(['succubus', 'swordsman']);
+    place(sim, 800, 890);
+    const cpu = new CpuController(1, 'hard');
+    run(sim, 1, BTN.SKILL);
+    run(sim, 4, 0);
+    check('掴みは跳んで避けられる技だと分かる', cpu._isJumpable(sim.fighters[0]),
+      `move=${sim.fighters[0].moveId}`);
+    check('掴みが来ていると分かる', cpu._incomingGrab(sim.fighters[0]));
+  }
+
+  // ガードで固めている最中に掴みが来たら、固めたままにせず考え直すこと。
+  // ここが無いと「守っているから大丈夫」で流して毎回捕まる。
+  {
+    const sim = newSim(['succubus', 'swordsman']);
+    place(sim, 800, 890);
+    const cpu = new CpuController(1, 'hard');
+    cpu.plan = { bits: BTN.GUARD, ticks: 30 };
+    run(sim, 1, BTN.SKILL);
+    run(sim, 3, 0);
+    check('ガード中でも掴みが来たら考え直す',
+      cpu._mustRethink(sim, sim.fighters[1], sim.fighters[0]));
+  }
+
+  // 逆側。跳んでいる相手に掴みを振らない（外すと長い硬直だけが残る）
+  {
+    const sim = newSim(['succubus', 'swordsman']);
+    place(sim, 800, 880);
+    const cpu = new CpuController(0, 'hard');
+    // 相手を跳ばせた状態で 200 ティック思考させ、掴みを振るか見る
+    let grabbed = 0;
+    for (let i = 0; i < 200; i += 1) {
+      const foe = sim.fighters[1];
+      if (!foe.airborne) sim.step([0, BTN.UP]);
+      else sim.step([cpu.think(sim), 0]);
+      if (sim.fighters[0].moveId === 'drainCatch' && foe.airborne) grabbed += 1;
+    }
+    check('跳んでいる相手には掴みを振らない', grabbed === 0, `振った回数=${grabbed}`);
+  }
+
+  // ガードで固める相手には掴みに行く
+  {
+    let used = 0;
+    for (let seed = 1; seed <= 12; seed += 1) {
+      const sim = newSim(['succubus', 'swordsman'], seed);
+      place(sim, 820, 900);
+      const cpu = new CpuController(0, 'hard');
+      for (let i = 0; i < 200; i += 1) {
+        sim.step([cpu.think(sim), BTN.GUARD]);
+        if (sim.fighters[0].moveId === 'drainCatch') { used += 1; break; }
+      }
+    }
+    check('固める相手には掴みに行く', used >= 9, `${used}/12 試行で掴みを選んだ`);
+  }
+}
+
 section('CPU の飛び道具への対応');
 {
   const { CpuController } = await import('../src/game/ai.js');
@@ -1618,6 +2029,43 @@ section('CPU の飛び道具への対応');
     sim.step([0, bits]);
   }
   check('弾が間近なら2段目を出して避けようとする', airJumped, `lastAct=${cpu.lastAct}`);
+}
+
+// ── 技データとアトラスの噛み合わせ ──────────────────────────
+// キャラ定義が指しているアニメ名が、実際に配られているアトラスに載っているか。
+// シートを差し替えたときにここがずれると、絵が出ないか一枚も描かれないまま
+// 試合が進む（sim は絵を見ないので、他のテストでは気づけない）。
+section('絵の対応');
+{
+  const { readFileSync } = await import('node:fs');
+  const { CHARACTER_IDS, EXTRA_SPRITE_IDS } = await import('../src/game/characters/index.js');
+  const { PROJECTILES } = await import('../src/game/projectiles.js');
+
+  const atlas = (id) =>
+    JSON.parse(readFileSync(new URL(`../assets/characters/${id}.json`, import.meta.url), 'utf8'));
+
+  for (const id of CHARACTER_IDS) {
+    const def = getCharacter(id);
+    const anims = atlas(id).animations;
+    const missing = Object.entries(def.anims)
+      .filter(([, name]) => !anims[name])
+      .map(([key, name]) => `${key}:${name}`);
+    check(`${def.name}の立ち回りの絵が揃っている`, missing.length === 0, missing.join(' '));
+
+    const moveAnims = Object.values(def.moves)
+      .map((m) => m.anim)
+      .filter((name) => name && !anims[name]);
+    check(`${def.name}の技の絵が揃っている`, moveAnims.length === 0, moveAnims.join(' '));
+  }
+
+  for (const id of EXTRA_SPRITE_IDS) {
+    const anims = atlas(id).animations;
+    const used = Object.values(PROJECTILES)
+      .filter((p) => p.sheet === id)
+      .flatMap((p) => Object.values(p.anims ?? {}));
+    const missing = used.filter((name) => !anims[name]);
+    check(`${id} の絵が揃っている`, used.length > 0 && missing.length === 0, missing.join(' '));
+  }
 }
 
 console.log(`\n合計 ${passed + failed} 件: 成功 ${passed} / 失敗 ${failed}`);

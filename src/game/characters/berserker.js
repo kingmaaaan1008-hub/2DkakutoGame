@@ -53,6 +53,8 @@ export default {
     crouch: 'crouch',
     hurt: 'hurt',
     death: 'death',
+    /** 掴まれている姿。淫魔の吸血に捕らえられたときに使う。 */
+    grabbed: 'grabbed',
   },
 
   attackMove: 'rampage',

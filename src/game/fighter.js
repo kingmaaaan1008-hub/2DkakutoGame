@@ -93,6 +93,16 @@ export class Fighter {
     /** 残りの空中ジャンプ回数。 */
     this.airJumps = 0;
     /**
+     * 滞空の残りティック（飛行を持つキャラだけ 0 より大きくなる）。
+     * この間は落下が止まり、左右入力でその高さのまま移動できる。
+     */
+    this.hoverTicks = 0;
+    /**
+     * 自分を掴んでいる相手の index。掴まれていなければ -1。
+     * 掴んだ本人だけがこちらに判定を通せる、という判断にも使う。
+     */
+    this.grabbedBy = -1;
+    /**
      * しゃがみの深さ（0 = 立ち, CROUCH_TICKS = しゃがみ切り）。
      * 絵のコマもやられ判定の高さもこの 1 個の値から作るので、
      * 「絵はまだ立っているのに判定だけ縮んでいる」が起きない。
@@ -141,10 +151,21 @@ export class Fighter {
 
   /**
    * 無敵か。ダウン中（浮いてから起き上がり切るまで）は攻撃を受け付けない。
+   * 掴まれている間も、掴んだ本人以外からは無敵（sim 側が例外を通す）。
    * ここを見て判定を飛ばすのは sim 側。
    */
   get invulnerable() {
-    return this.state === STATE.DOWN;
+    return this.state === STATE.DOWN || this.state === STATE.GRABBED;
+  }
+
+  /** 掴まれているか。 */
+  get isGrabbed() {
+    return this.state === STATE.GRABBED;
+  }
+
+  /** いま掴んでいる技を出している最中か（相手を保持できる状態か）。 */
+  get isHolding() {
+    return this.state === STATE.MOVE && this.currentMove()?.grabHold != null;
   }
 
   /** 自由に動ける状態か（技・硬直・空中を除く）。 */
@@ -312,6 +333,8 @@ export class Fighter {
     this.moveHitLanded = false;
     this.moveAir = this.airborne;
     this.usedGroups = [];
+    // 技を出したら滞空は終わり（滞空から急降下、という繋ぎを作るため）
+    this.hoverTicks = 0;
     // 空中技は跳んだ勢いを残す（地上技はその場で止まる）
     if (!this.moveAir) this.vx = 0;
     this.setAnim(move.anim, {
@@ -330,6 +353,7 @@ export class Fighter {
     this.usedGroups = [];
     this.comboCount = 0;
     this.crouchTimer = 0;
+    this.hoverTicks = 0;
     // 空中で技や硬直が明けたときは、地面に立たせるのではなく落下に戻す
     if (this.airborne) {
       this.state = STATE.JUMP;
@@ -345,16 +369,41 @@ export class Fighter {
     this.vy = this.def.jumpVy;
     this.vx = dir * this.def.jumpVx;
     this.airJumps = this.def.airJumps ?? AIR_JUMPS;
+    this.hoverTicks = 0;
     this.setAnim(this.def.anims.jump, { fps: 11, hold: true, restart: true });
+  }
+
+  /**
+   * いま空中で跳ぼうとしているのが何段目か（地上ジャンプを 1 段目と数える）。
+   * airJumps は残り回数なので、上限から引いて段数に直す。
+   */
+  get _jumpIndex() {
+    return (this.def.airJumps ?? AIR_JUMPS) - this.airJumps + 2;
   }
 
   /**
    * 空中ジャンプ（2段ジャンプ）。
    * 方向を入れていればその方向へ、入れていなければ横の勢いを殺して真上へ跳ぶ。
    * 後者があるので「飛び込みを空中で止めて技を透かす」動きができる。
+   *
+   * 飛行を持つキャラ（def.flight）は、flight.fromJump 段目から先が跳び上がりではなく
+   * **滞空**になる。高度は上げずにその場へ留まり、左右入力があればその高さのまま動ける。
    */
   _airJump(dir, sim) {
+    const flight = this.def.flight;
+    const hovering = flight && this._jumpIndex >= flight.fromJump;
     this.airJumps -= 1;
+
+    if (hovering) {
+      this.hoverTicks = flight.ticks;
+      this.vy = 0;
+      this.vx = dir * flight.speed;
+      this.setAnim(this.def.anims.fly, { fps: 12, loop: true });
+      sim?.addEffect('pop', this.x, this.y + 20, { life: 12 });
+      return;
+    }
+
+    this.hoverTicks = 0;
     this.vy = this.def.jumpVy * AIR_JUMP_VY_SCALE;
     if (dir !== 0) this.vx = dir * this.def.jumpVx;
     else this.vx *= 0.35;
@@ -409,6 +458,9 @@ export class Fighter {
       case STATE.BLOCK:
       case STATE.GUARD_BREAK:
         this._stepStun(sim);
+        break;
+      case STATE.GRABBED:
+        this._stepGrabbed(opponent, sim);
         break;
       case STATE.DOWN:
         this._stepDown(sim);
@@ -575,9 +627,52 @@ export class Fighter {
       return;
     }
 
+    // 滞空中。毎ティック vy を 0 に戻すことで重力を打ち消している
+    // （_integrate はこのあとに走るので、落下ぶんが積もらない）。
+    if (this.hoverTicks > 0) {
+      this.hoverTicks -= 1;
+      this.vy = 0;
+      this.vx = dir * this.def.flight.speed;
+      this.setAnim(this.def.anims.fly, { fps: 12, loop: true });
+      return;
+    }
+
     // 上昇中と落下中でアニメを切り替える
     if (this.vy > 0) this.setAnim(this.def.anims.jump, { fps: 11, hold: true });
     else this.setAnim(this.def.anims.fall, { fps: 11, hold: true });
+  }
+
+  /**
+   * 掴まれている間。位置も向きも掴んだ側に完全に固定される。
+   * 掴んだ側が技を終える／中断されると落とされる。
+   */
+  _stepGrabbed(opponent, sim) {
+    // 2人しかいないので、掴んでいるのは必ず相手
+    if (!opponent.isHolding || opponent.index !== this.grabbedBy) {
+      this._releaseFromGrab();
+      return;
+    }
+    const hold = opponent.currentMove().grabHold;
+    this.vx = 0;
+    this.vy = 0;
+    this.facing = -opponent.facing;
+    this.x = opponent.x + opponent.facing * hold.x;
+    this.y = hold.y;
+    this.setAnim(this.def.anims.grabbed, { fps: 9, loop: true });
+  }
+
+  /**
+   * 掴みが解けて落とされる。
+   * ダウンの落下段階に流し込むので、地面に叩きつけられたところで
+   * 通常のダウン（致命傷を負っていれば _collapse）と同じ扱いになる。
+   */
+  _releaseFromGrab() {
+    this.grabbedBy = -1;
+    this.state = STATE.DOWN;
+    this.downPhase = DOWN_PHASE.AIR;
+    this.stateTimer = 0;
+    this.vy = 0;
+    this.setAnim(this.def.anims.hurt, { fps: 14, hold: true, restart: true });
   }
 
   _stepMove(opponent, sim) {
@@ -702,6 +797,7 @@ export class Fighter {
         this.moveFrame = -1;
         this.moveAir = false;
         this.usedGroups = [];
+        this.hoverTicks = 0;
         this.vx *= 0.4;
         this.setAnim(this.def.anims.land, { fps: 20, hold: true, restart: true });
       } else if (crashed) {
@@ -761,6 +857,9 @@ export class Fighter {
 
     // のけぞりもガードも立ち姿勢の絵なので、やられ判定も立ちに戻す
     this.crouchTimer = 0;
+    this.hoverTicks = 0;
+    // 掴まれた状態から打たれた（＝掴んだ側が最後の一撃を入れた）ら、そこで手が離れる
+    this.grabbedBy = -1;
     this.hitstop = hit.hitstop;
     if (attacker) attacker.hitstop = hit.hitstop;
 
@@ -819,6 +918,48 @@ export class Fighter {
     return breaking ? 'break' : 'hit';
   }
 
+  /**
+   * 掴まれる。打撃と違ってのけぞらせず、掴んだ側に位置ごと拘束する。
+   *
+   * 掴みも「当たった」ことに変わりはないので、この時点で致命傷（doomed）になる。
+   * ただし倒れるのは掴みが解けたあと ＝ 吸い終わって投げ捨てられたときなので、
+   * ここでは倒さず _stepGrabbed に任せる。
+   *
+   * @param {Fighter} grabber 掴んだ側
+   * @param {object} hit 掴み判定
+   * @param {import('./sim.js').Simulation} sim
+   */
+  receiveGrab(grabber, hit, sim) {
+    this.crouchTimer = 0;
+    this.hoverTicks = 0;
+    this.hitstop = hit.hitstop;
+    grabber.hitstop = hit.hitstop;
+
+    this.health = 0;
+    this.doomed = true;
+
+    this.state = STATE.GRABBED;
+    this.stateTimer = 0;
+    this.grabbedBy = grabber.index;
+    this.moveId = null;
+    this.moveFrame = -1;
+    this.moveAir = false;
+    this.usedGroups = [];
+    this.comboCount = 0;
+    this.vx = 0;
+    this.vy = 0;
+    // 掴まれた側は掴んだ相手の方を向かされる
+    this.facing = -grabber.facing;
+    this.setAnim(this.def.anims.grabbed, { fps: 9, loop: true, restart: true });
+
+    grabber.comboCount += 1;
+    grabber.comboDisplay = grabber.comboCount;
+    grabber.comboDisplayTimer = 90;
+
+    sim.addEffect('break', this.x, this.y + 118);
+    sim.shake = Math.max(sim.shake, 12);
+  }
+
   /** 致命傷を負ったキャラが、コンボが途切れて崩れ落ちる。 */
   _collapse(sim) {
     this.health = 0;
@@ -854,7 +995,7 @@ export class Fighter {
       this.state, this.stateTimer, this.moveId, this.moveFrame,
       this.moveHitLanded, this.moveAir, this.usedGroups.slice(),
       this.hitstop, this.landLag, this.downPhase, this.airJumps, this.doomed,
-      this.crouchTimer,
+      this.crouchTimer, this.hoverTicks, this.grabbedBy,
       this.guardHeld, this.walkDir, this.dashDir, this.prevInput,
       this.tapDir, this.tapTimer, this.bufAttack, this.bufSkill, this.bufJump,
       this.comboCount, this.comboDisplay, this.comboDisplayTimer,
@@ -873,6 +1014,7 @@ export class Fighter {
     this.moveHitLanded = s[i++]; this.moveAir = s[i++]; this.usedGroups = s[i++].slice();
     this.hitstop = s[i++]; this.landLag = s[i++]; this.downPhase = s[i++];
     this.airJumps = s[i++]; this.doomed = s[i++]; this.crouchTimer = s[i++];
+    this.hoverTicks = s[i++]; this.grabbedBy = s[i++];
     this.guardHeld = s[i++]; this.walkDir = s[i++]; this.dashDir = s[i++]; this.prevInput = s[i++];
     this.tapDir = s[i++]; this.tapTimer = s[i++];
     this.bufAttack = s[i++]; this.bufSkill = s[i++]; this.bufJump = s[i++];

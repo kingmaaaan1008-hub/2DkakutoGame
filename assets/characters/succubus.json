@@ -1,0 +1,181 @@
+{
+  "id": "succubus",
+  "image": "succubus.webp",
+  "atlasWidth": 1832,
+  "atlasHeight": 3750,
+  "sourceFps": 10,
+  "scale": 0.41837,
+  "height": 205,
+  "animations": {
+    "idle": {
+      "x": 0,
+      "y": 0,
+      "cw": 139,
+      "ch": 210,
+      "frames": 8,
+      "ax": 104.96,
+      "ay": 207.09,
+      "src": "succubus"
+    },
+    "walk": {
+      "x": 0,
+      "y": 210,
+      "cw": 162,
+      "ch": 210,
+      "frames": 8,
+      "ax": 63.54,
+      "ay": 199.56,
+      "src": "succubus"
+    },
+    "run": {
+      "x": 0,
+      "y": 420,
+      "cw": 157,
+      "ch": 205,
+      "frames": 8,
+      "ax": 61.03,
+      "ay": 203.33,
+      "src": "succubus"
+    },
+    "fly": {
+      "x": 0,
+      "y": 625,
+      "cw": 185,
+      "ch": 256,
+      "frames": 8,
+      "ax": 38.86,
+      "ay": 269.01,
+      "src": "succubus"
+    },
+    "jump": {
+      "x": 0,
+      "y": 881,
+      "cw": 176,
+      "ch": 233,
+      "frames": 8,
+      "ax": 70.65,
+      "ay": 235.12,
+      "src": "succubus"
+    },
+    "fall": {
+      "x": 0,
+      "y": 1114,
+      "cw": 174,
+      "ch": 232,
+      "frames": 8,
+      "ax": 69.82,
+      "ay": 234.7,
+      "src": "succubus"
+    },
+    "land": {
+      "x": 0,
+      "y": 1346,
+      "cw": 150,
+      "ch": 192,
+      "frames": 8,
+      "ax": 58.1,
+      "ay": 194.54,
+      "src": "succubus"
+    },
+    "guard": {
+      "x": 0,
+      "y": 1538,
+      "cw": 218,
+      "ch": 209,
+      "frames": 8,
+      "ax": 98.26,
+      "ay": 205.42,
+      "src": "succubus"
+    },
+    "hurt": {
+      "x": 0,
+      "y": 1747,
+      "cw": 157,
+      "ch": 225,
+      "frames": 8,
+      "ax": 61.45,
+      "ay": 220.48,
+      "src": "succubus"
+    },
+    "death": {
+      "x": 0,
+      "y": 1972,
+      "cw": 229,
+      "ch": 210,
+      "frames": 8,
+      "ax": 104.54,
+      "ay": 195.8,
+      "src": "succubus"
+    },
+    "grabbed": {
+      "x": 0,
+      "y": 2182,
+      "cw": 139,
+      "ch": 236,
+      "frames": 8,
+      "ax": 70.23,
+      "ay": 272.36,
+      "src": "succubus"
+    },
+    "claw1": {
+      "x": 0,
+      "y": 2418,
+      "cw": 202,
+      "ch": 231,
+      "frames": 8,
+      "ax": 109.93,
+      "ay": 228.01,
+      "src": "succubus_attack"
+    },
+    "claw2": {
+      "x": 0,
+      "y": 2649,
+      "cw": 183,
+      "ch": 254,
+      "frames": 8,
+      "ax": 100.72,
+      "ay": 249.77,
+      "src": "succubus_attack"
+    },
+    "wingslap": {
+      "x": 0,
+      "y": 2903,
+      "cw": 215,
+      "ch": 242,
+      "frames": 8,
+      "ax": 117.46,
+      "ay": 253.11,
+      "src": "succubus_attack"
+    },
+    "divekick": {
+      "x": 0,
+      "y": 3145,
+      "cw": 216,
+      "ch": 202,
+      "frames": 8,
+      "ax": 117.88,
+      "ay": 243.07,
+      "src": "succubus_attack"
+    },
+    "drain": {
+      "x": 0,
+      "y": 3347,
+      "cw": 180,
+      "ch": 203,
+      "frames": 8,
+      "ax": 99.47,
+      "ay": 217.13,
+      "src": "succubus_attack"
+    },
+    "crouch": {
+      "x": 0,
+      "y": 3550,
+      "cw": 170,
+      "ch": 200,
+      "frames": 8,
+      "ax": 102.5,
+      "ay": 196.63,
+      "src": "succubus_crouch"
+    }
+  }
+}
