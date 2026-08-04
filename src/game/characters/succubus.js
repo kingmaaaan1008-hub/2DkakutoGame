@@ -93,6 +93,15 @@ export default {
     grabbed: 'grabbed',
   },
 
+  /**
+   * 左右を裏返して描くアニメ（見た目だけ。判定・移動には影響しない）。
+   * divekick シートは他と逆向き——進行方向に背を向ける形で描かれているので、
+   * ここで反転して蹴り足が前（進む側）を向くようにしている。
+   */
+  animFlip: {
+    divekick: true,
+  },
+
   attackMove: 'claw1',
   skillMove: 'drainCatch',
   airAttackMove: 'wingSlap',

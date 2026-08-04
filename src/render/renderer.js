@@ -205,13 +205,16 @@ export class Renderer {
     const flashing = f.hitstop > 0 && (f.state === STATE.HIT || f.state === STATE.GUARD_BREAK);
     if (flashing) ctx.filter = 'brightness(1.9) saturate(0.4)';
 
+    // animFlip に載っているアニメだけ左右を裏返す（素材が逆向きに描かれている場合）
+    const facing = f.def.animFlip?.[f.anim.name] ? -f.facing : f.facing;
+
     drawFighterSprite(
       ctx,
       sprite,
       f.anim,
       cam.toScreenX(f.x),
       cam.toScreenY(f.y),
-      f.facing,
+      facing,
       cam.zoom,
       f.def.animScale?.[f.anim.name] ?? 1
     );
