@@ -1,16 +1,33 @@
 {
   "id": "mage",
-  "image": "mage.webp",
-  "atlasWidth": 4168,
-  "atlasHeight": 6235,
+  "images": [
+    "mage-0.webp",
+    "mage-1.webp",
+    "mage-2.webp"
+  ],
+  "pages": [
+    {
+      "w": 4168,
+      "h": 1834
+    },
+    {
+      "w": 3304,
+      "h": 2126
+    },
+    {
+      "w": 2584,
+      "h": 2275
+    }
+  ],
   "sourceFps": 10,
   "scale": 0.92375,
   "height": 212,
   "texelsPerUnit": 2,
   "animations": {
     "idle": {
+      "page": 2,
       "x": 0,
-      "y": 0,
+      "y": 818,
       "cw": 316,
       "ch": 432,
       "frames": 8,
@@ -19,8 +36,9 @@
       "src": "mage"
     },
     "walk": {
+      "page": 2,
       "x": 0,
-      "y": 432,
+      "y": 0,
       "cw": 323,
       "ch": 428,
       "frames": 8,
@@ -29,8 +47,9 @@
       "src": "mage"
     },
     "fly": {
+      "page": 2,
       "x": 0,
-      "y": 860,
+      "y": 428,
       "cw": 319,
       "ch": 390,
       "frames": 8,
@@ -39,8 +58,9 @@
       "src": "mage"
     },
     "cast": {
+      "page": 1,
       "x": 0,
-      "y": 1250,
+      "y": 594,
       "cw": 396,
       "ch": 573,
       "frames": 8,
@@ -49,8 +69,9 @@
       "src": "mage"
     },
     "hurt": {
+      "page": 2,
       "x": 0,
-      "y": 1823,
+      "y": 1250,
       "cw": 303,
       "ch": 480,
       "frames": 8,
@@ -59,8 +80,9 @@
       "src": "mage"
     },
     "death": {
+      "page": 0,
       "x": 0,
-      "y": 2303,
+      "y": 0,
       "cw": 521,
       "ch": 441,
       "frames": 8,
@@ -69,8 +91,9 @@
       "src": "mage"
     },
     "jump": {
+      "page": 1,
       "x": 0,
-      "y": 2744,
+      "y": 0,
       "cw": 413,
       "ch": 594,
       "frames": 8,
@@ -79,8 +102,9 @@
       "src": "mage_extra"
     },
     "fall": {
+      "page": 0,
       "x": 0,
-      "y": 3338,
+      "y": 441,
       "cw": 483,
       "ch": 568,
       "frames": 8,
@@ -89,8 +113,9 @@
       "src": "mage_extra"
     },
     "land": {
+      "page": 0,
       "x": 0,
-      "y": 3906,
+      "y": 1406,
       "cw": 429,
       "ch": 428,
       "frames": 8,
@@ -99,8 +124,9 @@
       "src": "mage_extra"
     },
     "beam": {
+      "page": 0,
       "x": 0,
-      "y": 4334,
+      "y": 1009,
       "cw": 438,
       "ch": 397,
       "frames": 8,
@@ -109,8 +135,9 @@
       "src": "mage_extra"
     },
     "guard": {
+      "page": 1,
       "x": 0,
-      "y": 4731,
+      "y": 1167,
       "cw": 334,
       "ch": 510,
       "frames": 8,
@@ -119,8 +146,9 @@
       "src": "mage_extra"
     },
     "crouch": {
+      "page": 1,
       "x": 0,
-      "y": 5241,
+      "y": 1677,
       "cw": 332,
       "ch": 449,
       "frames": 8,
@@ -129,8 +157,9 @@
       "src": "mage_crouch"
     },
     "grabbed": {
+      "page": 2,
       "x": 0,
-      "y": 5690,
+      "y": 1730,
       "cw": 269,
       "ch": 545,
       "frames": 8,

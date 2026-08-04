@@ -25,12 +25,19 @@ async function loadJson(url) {
 
 /**
  * 1 キャラ分のスプライトを読む。
- * @returns {{id:string, image:HTMLImageElement, animations:object, height:number}}
+ *
+ * アトラスは複数ページに分かれている。1 枚にまとめると 1 画像あたり
+ * 30Mpx を超えて iOS Safari がデコードを拒むため、ビルド側で 8Mpx ごとに
+ * 割ってある。どのアニメがどのページに載っているかは animations[].page。
+ *
+ * @returns {{id:string, images:HTMLImageElement[], animations:object, height:number}}
  */
 export async function loadCharacterSprites(id) {
   const manifest = await loadJson(`${CHARACTER_DIR}/${id}.json`);
-  const image = await loadImage(`${CHARACTER_DIR}/${manifest.image}`);
-  return { ...manifest, image };
+  const images = await Promise.all(
+    manifest.images.map((file) => loadImage(`${CHARACTER_DIR}/${file}`))
+  );
+  return { ...manifest, images };
 }
 
 /**

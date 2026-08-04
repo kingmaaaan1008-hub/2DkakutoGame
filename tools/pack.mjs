@@ -50,29 +50,42 @@ async function main() {
   let totalIn = 0;
   let totalOut = 0;
 
+  // 1 キャラが複数ページに分かれるので、前回の出力が残っていると
+  // ページ数が減ったときに使われない画像が居座る。id で始まるものを一度掃除する。
+  const stale = await readdir(OUT);
+
   for (const id of ids) {
     const raw = await readFile(path.join(IN, `${id}.json`), 'utf8');
     const manifest = JSON.parse(raw.replace(/^﻿/, '')); // 念のため BOM を落とす
-    const srcPng = path.join(IN, manifest.image);
-    totalIn += (await stat(srcPng)).size;
 
-    let outName;
-    if (sharp) {
-      outName = `${id}.webp`;
-      await sharp(srcPng).webp(WEBP).toFile(path.join(OUT, outName));
-      // 前回 PNG で書き出していた場合に取り残さない
-      await rm(path.join(OUT, `${id}.png`), { force: true });
-    } else {
-      outName = `${id}.png`;
-      await copyFile(srcPng, path.join(OUT, outName));
+    // <id>.webp（分割前の 1 枚もの）と <id>-N.webp/png の両方が対象。
+    const owned = new RegExp(`^${id}(-\\d+)?\\.(webp|png)$`);
+    await Promise.all(
+      stale.filter((f) => owned.test(f)).map((f) => rm(path.join(OUT, f), { force: true }))
+    );
+
+    const outNames = [];
+    for (const pageFile of manifest.images) {
+      const srcPng = path.join(IN, pageFile);
+      totalIn += (await stat(srcPng)).size;
+
+      let outName;
+      if (sharp) {
+        outName = pageFile.replace(/\.png$/, '.webp');
+        await sharp(srcPng).webp(WEBP).toFile(path.join(OUT, outName));
+      } else {
+        outName = pageFile;
+        await copyFile(srcPng, path.join(OUT, outName));
+      }
+
+      const size = (await stat(path.join(OUT, outName))).size;
+      totalOut += size;
+      outNames.push(outName);
+      console.log(`  ${outName.padEnd(20)} ${(size / 1048576).toFixed(2)} MB`);
     }
 
-    manifest.image = outName;
+    manifest.images = outNames;
     await writeFile(path.join(OUT, `${id}.json`), JSON.stringify(manifest, null, 2) + '\n');
-
-    const size = (await stat(path.join(OUT, outName))).size;
-    totalOut += size;
-    console.log(`  ${outName.padEnd(20)} ${(size / 1048576).toFixed(2)} MB`);
   }
 
   console.log(

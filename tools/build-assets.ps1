@@ -28,7 +28,14 @@ param(
   #
   # 2 is what ships. Do not lower it without rebuilding, or the atlases and the
   # manifests they are read with will disagree about how big a texel is.
-  [double]$Supersample = 2
+  [double]$Supersample = 2,
+  # Pixels per atlas page. A character's animations are split across as many
+  # pages as this allows, because iOS Safari refuses to decode a single image
+  # much past 16.7 Mpx (4096x4096) -- at Supersample 2 one page per character
+  # reached 35 Mpx and the game died on iPhone while working everywhere else.
+  # 8 Mpx leaves room under that ceiling, and smaller pages also mean Safari
+  # only has to hold the ones actually being drawn.
+  [double]$MaxPagePixels = 8e6
 )
 
 $ErrorActionPreference = 'Stop'
@@ -238,34 +245,65 @@ foreach ($cfg in $CONFIG) {
     }
   }
 
-  # 4. lay the rows out, one animation per row
-  $atlasW = 0; $atlasH = 0
-  foreach ($r in $rows) {
-    $r.x = 0
-    $r.y = $atlasH
+  # 4. lay the rows out, one animation per row, filling one page at a time
+  #
+  # A page is only as wide as its widest row, so rows are grouped widest first:
+  # that keeps the narrow animations off the wide pages instead of padding every
+  # one of them out to the widest row in the character. Name breaks ties so the
+  # layout is the same on every run.
+  $ordered = $rows | Sort-Object -Property @{ Expression = { $_.cw * $_.frames }; Descending = $true },
+                                           @{ Expression = { $_.name }; Descending = $false }
+  $pages = @()
+  $cur = @{ rows = @(); w = 0; h = 0 }
+  foreach ($r in $ordered) {
     $rowW = $r.cw * $r.frames
-    if ($rowW -gt $atlasW) { $atlasW = $rowW }
-    $atlasH += $r.ch
-  }
-
-  # 5. draw
-  $canvas = New-Object KakutoTools.Canvas($atlasW, $atlasH)
-  foreach ($r in $rows) {
-    for ($i = 0; $i -lt $r.frames; $i++) {
-      $rc = $r.anim.frameRects[$i]
-      $canvas.Blit($r.L.sheet,
-        ($rc.x + $r.ux + $r.shift[$i]), ($rc.y + $r.uy), $r.uw, $r.uh,
-        ($r.x + $i * $r.cw), $r.y, $r.cw, $r.ch)
+    $w = [math]::Max($cur.w, $rowW)
+    $h = $cur.h + $r.ch
+    # A row never gets split, so a page that holds only one row is allowed to
+    # go over the budget (the widest row here is ~2.7 Mpx, well inside it).
+    if ($cur.rows.Count -gt 0 -and ($w * $h) -gt $MaxPagePixels) {
+      $pages += , $cur
+      $cur = @{ rows = @(); w = 0; h = 0 }
+      $w = $rowW; $h = $r.ch
     }
+    $r.page = $pages.Count
+    $r.x = 0
+    $r.y = $cur.h
+    $cur.rows += $r
+    $cur.w = $w
+    $cur.h = $h
   }
-  $pngPath = Join-Path $Out "$($cfg.id).png"
-  $canvas.Save($pngPath)
-  $canvas.Dispose()
+  if ($cur.rows.Count -gt 0) { $pages += , $cur }
+
+  # 5. draw, one image per page
+  $pageFiles = @()
+  $pageSizes = @()
+  for ($pi = 0; $pi -lt $pages.Count; $pi++) {
+    $p = $pages[$pi]
+    $canvas = New-Object KakutoTools.Canvas($p.w, $p.h)
+    foreach ($r in $p.rows) {
+      for ($i = 0; $i -lt $r.frames; $i++) {
+        $rc = $r.anim.frameRects[$i]
+        $canvas.Blit($r.L.sheet,
+          ($rc.x + $r.ux + $r.shift[$i]), ($rc.y + $r.uy), $r.uw, $r.uh,
+          ($r.x + $i * $r.cw), $r.y, $r.cw, $r.ch)
+      }
+    }
+    $pageName = "$($cfg.id)-$pi.png"
+    $canvas.Save((Join-Path $Out $pageName))
+    $canvas.Dispose()
+    $pageFiles += $pageName
+    $pageSizes += [ordered]@{ w = $p.w; h = $p.h }
+    Write-Host ("  page {0}  {1}x{2}  {3} Mpx  {4} anims" -f `
+      $pi, $p.w, $p.h, [math]::Round($p.w * $p.h / 1e6, 1), $p.rows.Count)
+  }
 
   # 6. manifest
   $anims = [ordered]@{}
   foreach ($r in $rows) {
     $anims[$r.name] = [ordered]@{
+      # which of the images this animation's row lives on
+      page = $r.page
       x = $r.x; y = $r.y; cw = $r.cw; ch = $r.ch
       frames = $r.frames; ax = $r.ax; ay = $r.ay
       src = $r.L.cfg.file
@@ -273,9 +311,9 @@ foreach ($cfg in $CONFIG) {
   }
   $manifest = [ordered]@{
     id         = $cfg.id
-    image      = "$($cfg.id).png"
-    atlasWidth = $atlasW
-    atlasHeight = $atlasH
+    # One entry per page, in page order. animations[].page indexes into this.
+    images     = @($pageFiles)
+    pages      = @($pageSizes)
     sourceFps  = $loaded[0].meta.fps
     scale      = [math]::Round($scale, 5)
     height     = $cfg.targetHeight
@@ -289,8 +327,9 @@ foreach ($cfg in $CONFIG) {
     (New-Object System.Text.UTF8Encoding($false)))
 
   foreach ($L in $loaded) { $L.sheet.Dispose() }
-  $kb = [math]::Round((Get-Item $pngPath).Length / 1KB)
-  Write-Host ("  atlas {0}x{1}  {2} anims  {3} KB" -f $atlasW, $atlasH, $rows.Count, $kb)
+  $kb = 0
+  foreach ($f in $pageFiles) { $kb += (Get-Item (Join-Path $Out $f)).Length / 1KB }
+  Write-Host ("  {0} pages  {1} anims  {2} KB" -f $pages.Count, $rows.Count, [math]::Round($kb))
 }
 
 Write-Host ""

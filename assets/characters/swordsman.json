@@ -1,14 +1,36 @@
 {
   "id": "swordsman",
-  "image": "swordsman.webp",
-  "atlasWidth": 4312,
-  "atlasHeight": 6730,
+  "images": [
+    "swordsman-0.webp",
+    "swordsman-1.webp",
+    "swordsman-2.webp",
+    "swordsman-3.webp"
+  ],
+  "pages": [
+    {
+      "w": 4312,
+      "h": 1392
+    },
+    {
+      "w": 3928,
+      "h": 1708
+    },
+    {
+      "w": 3712,
+      "h": 1771
+    },
+    {
+      "w": 3504,
+      "h": 1859
+    }
+  ],
   "sourceFps": 10,
   "scale": 1.05651,
   "height": 215,
   "texelsPerUnit": 2,
   "animations": {
     "idle": {
+      "page": 3,
       "x": 0,
       "y": 0,
       "cw": 438,
@@ -19,6 +41,7 @@
       "src": "swordsman"
     },
     "walk": {
+      "page": 3,
       "x": 0,
       "y": 438,
       "cw": 433,
@@ -29,8 +52,9 @@
       "src": "swordsman"
     },
     "run": {
+      "page": 2,
       "x": 0,
-      "y": 877,
+      "y": 433,
       "cw": 464,
       "ch": 361,
       "frames": 8,
@@ -39,8 +63,9 @@
       "src": "swordsman"
     },
     "attack": {
+      "page": 2,
       "x": 0,
-      "y": 1238,
+      "y": 1292,
       "cw": 453,
       "ch": 479,
       "frames": 8,
@@ -49,8 +74,9 @@
       "src": "swordsman"
     },
     "hurt": {
+      "page": 0,
       "x": 0,
-      "y": 1717,
+      "y": 956,
       "cw": 493,
       "ch": 436,
       "frames": 8,
@@ -59,8 +85,9 @@
       "src": "swordsman"
     },
     "death": {
+      "page": 2,
       "x": 0,
-      "y": 2153,
+      "y": 794,
       "cw": 454,
       "ch": 498,
       "frames": 8,
@@ -69,8 +96,9 @@
       "src": "swordsman"
     },
     "jump": {
+      "page": 1,
       "x": 0,
-      "y": 2651,
+      "y": 618,
       "cw": 491,
       "ch": 635,
       "frames": 8,
@@ -79,8 +107,9 @@
       "src": "swordsman_extra"
     },
     "fall": {
+      "page": 1,
       "x": 0,
-      "y": 3286,
+      "y": 0,
       "cw": 491,
       "ch": 618,
       "frames": 8,
@@ -89,8 +118,9 @@
       "src": "swordsman_extra"
     },
     "land": {
+      "page": 0,
       "x": 0,
-      "y": 3904,
+      "y": 522,
       "cw": 508,
       "ch": 434,
       "frames": 8,
@@ -99,8 +129,9 @@
       "src": "swordsman_extra"
     },
     "attack2": {
+      "page": 0,
       "x": 0,
-      "y": 4338,
+      "y": 0,
       "cw": 539,
       "ch": 522,
       "frames": 8,
@@ -109,8 +140,9 @@
       "src": "swordsman_extra"
     },
     "tackle": {
+      "page": 1,
       "x": 0,
-      "y": 4860,
+      "y": 1253,
       "cw": 486,
       "ch": 455,
       "frames": 8,
@@ -119,8 +151,9 @@
       "src": "swordsman_extra"
     },
     "guard": {
+      "page": 3,
       "x": 0,
-      "y": 5315,
+      "y": 877,
       "cw": 428,
       "ch": 490,
       "frames": 8,
@@ -129,8 +162,9 @@
       "src": "swordsman_extra"
     },
     "crouch": {
+      "page": 2,
       "x": 0,
-      "y": 5805,
+      "y": 0,
       "cw": 464,
       "ch": 433,
       "frames": 8,
@@ -139,8 +173,9 @@
       "src": "swordsman_crouch"
     },
     "grabbed": {
+      "page": 3,
       "x": 0,
-      "y": 6238,
+      "y": 1367,
       "cw": 427,
       "ch": 492,
       "frames": 8,

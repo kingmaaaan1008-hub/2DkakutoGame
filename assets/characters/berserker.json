@@ -1,14 +1,36 @@
 {
   "id": "berserker",
-  "image": "berserker.webp",
-  "atlasWidth": 4128,
-  "atlasHeight": 6706,
+  "images": [
+    "berserker-0.webp",
+    "berserker-1.webp",
+    "berserker-2.webp",
+    "berserker-3.webp"
+  ],
+  "pages": [
+    {
+      "w": 4128,
+      "h": 1805
+    },
+    {
+      "w": 3680,
+      "h": 1796
+    },
+    {
+      "w": 3160,
+      "h": 2177
+    },
+    {
+      "w": 2408,
+      "h": 928
+    }
+  ],
   "sourceFps": 10,
   "scale": 0.88757,
   "height": 225,
   "texelsPerUnit": 2,
   "animations": {
     "idle": {
+      "page": 3,
       "x": 0,
       "y": 0,
       "cw": 301,
@@ -19,8 +41,9 @@
       "src": "berserker"
     },
     "walk": {
+      "page": 2,
       "x": 0,
-      "y": 456,
+      "y": 434,
       "cw": 364,
       "ch": 412,
       "frames": 8,
@@ -29,8 +52,9 @@
       "src": "berserker"
     },
     "run": {
+      "page": 1,
       "x": 0,
-      "y": 868,
+      "y": 0,
       "cw": 460,
       "ch": 402,
       "frames": 8,
@@ -39,8 +63,9 @@
       "src": "berserker"
     },
     "jump": {
+      "page": 0,
       "x": 0,
-      "y": 1270,
+      "y": 1259,
       "cw": 465,
       "ch": 546,
       "frames": 8,
@@ -49,8 +74,9 @@
       "src": "berserker"
     },
     "fall": {
+      "page": 1,
       "x": 0,
-      "y": 1816,
+      "y": 402,
       "cw": 429,
       "ch": 519,
       "frames": 8,
@@ -59,8 +85,9 @@
       "src": "berserker"
     },
     "land": {
+      "page": 2,
       "x": 0,
-      "y": 2335,
+      "y": 846,
       "cw": 358,
       "ch": 443,
       "frames": 8,
@@ -69,8 +96,9 @@
       "src": "berserker"
     },
     "attack": {
+      "page": 0,
       "x": 0,
-      "y": 2778,
+      "y": 0,
       "cw": 516,
       "ch": 405,
       "frames": 8,
@@ -79,8 +107,9 @@
       "src": "berserker"
     },
     "rampage1": {
+      "page": 1,
       "x": 0,
-      "y": 3183,
+      "y": 1325,
       "cw": 397,
       "ch": 471,
       "frames": 8,
@@ -89,8 +118,9 @@
       "src": "berserker"
     },
     "rampage2": {
+      "page": 2,
       "x": 0,
-      "y": 3654,
+      "y": 1289,
       "cw": 356,
       "ch": 462,
       "frames": 8,
@@ -99,8 +129,9 @@
       "src": "berserker"
     },
     "rampage3": {
+      "page": 0,
       "x": 0,
-      "y": 4116,
+      "y": 405,
       "cw": 477,
       "ch": 423,
       "frames": 8,
@@ -109,8 +140,9 @@
       "src": "berserker"
     },
     "guard": {
+      "page": 2,
       "x": 0,
-      "y": 4539,
+      "y": 1751,
       "cw": 320,
       "ch": 426,
       "frames": 8,
@@ -119,8 +151,9 @@
       "src": "berserker"
     },
     "hurt": {
+      "page": 2,
       "x": 0,
-      "y": 4965,
+      "y": 0,
       "cw": 395,
       "ch": 434,
       "frames": 8,
@@ -129,8 +162,9 @@
       "src": "berserker"
     },
     "death": {
+      "page": 0,
       "x": 0,
-      "y": 5399,
+      "y": 828,
       "cw": 467,
       "ch": 431,
       "frames": 8,
@@ -139,8 +173,9 @@
       "src": "berserker"
     },
     "crouch": {
+      "page": 1,
       "x": 0,
-      "y": 5830,
+      "y": 921,
       "cw": 412,
       "ch": 404,
       "frames": 8,
@@ -149,8 +184,9 @@
       "src": "berserker_crouch"
     },
     "grabbed": {
+      "page": 3,
       "x": 0,
-      "y": 6234,
+      "y": 456,
       "cw": 297,
       "ch": 472,
       "frames": 8,

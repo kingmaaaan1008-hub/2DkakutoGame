@@ -68,7 +68,7 @@ export function drawFighterSprite(ctx, sprite, anim, screenX, screenY, facing, z
   ctx.translate(screenX, screenY);
   ctx.scale(facing < 0 ? -z : z, z);
   ctx.drawImage(
-    sprite.image,
+    sprite.images[cell.page],
     cell.x + index * cell.cw,
     cell.y,
     cell.cw,
@@ -93,7 +93,7 @@ export function drawStillFrame(ctx, sprite, animName, index, screenX, screenY, s
   ctx.translate(screenX, screenY);
   ctx.scale(facing < 0 ? -z : z, z);
   ctx.drawImage(
-    sprite.image,
+    sprite.images[cell.page],
     cell.x + i * cell.cw,
     cell.y,
     cell.cw,

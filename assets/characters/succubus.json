@@ -1,16 +1,43 @@
 {
   "id": "succubus",
-  "image": "succubus.webp",
-  "atlasWidth": 4128,
-  "atlasHeight": 8484,
+  "images": [
+    "succubus-0.webp",
+    "succubus-1.webp",
+    "succubus-2.webp",
+    "succubus-3.webp",
+    "succubus-4.webp"
+  ],
+  "pages": [
+    {
+      "w": 4128,
+      "h": 1550
+    },
+    {
+      "w": 3872,
+      "h": 2050
+    },
+    {
+      "w": 3520,
+      "h": 1968
+    },
+    {
+      "w": 3312,
+      "h": 2386
+    },
+    {
+      "w": 2952,
+      "h": 530
+    }
+  ],
   "sourceFps": 10,
   "scale": 0.95128,
   "height": 205,
   "texelsPerUnit": 2,
   "animations": {
     "idle": {
+      "page": 3,
       "x": 0,
-      "y": 0,
+      "y": 1958,
       "cw": 378,
       "ch": 428,
       "frames": 8,
@@ -19,8 +46,9 @@
       "src": "succubus"
     },
     "walk": {
+      "page": 3,
       "x": 0,
-      "y": 428,
+      "y": 1092,
       "cw": 403,
       "ch": 435,
       "frames": 8,
@@ -29,8 +57,9 @@
       "src": "succubus"
     },
     "move": {
+      "page": 3,
       "x": 0,
-      "y": 863,
+      "y": 543,
       "cw": 406,
       "ch": 549,
       "frames": 8,
@@ -39,8 +68,9 @@
       "src": "succubus"
     },
     "fly": {
+      "page": 0,
       "x": 0,
-      "y": 1412,
+      "y": 0,
       "cw": 516,
       "ch": 536,
       "frames": 8,
@@ -49,8 +79,9 @@
       "src": "succubus"
     },
     "jump": {
+      "page": 1,
       "x": 0,
-      "y": 1948,
+      "y": 0,
       "cw": 484,
       "ch": 546,
       "frames": 8,
@@ -59,8 +90,9 @@
       "src": "succubus"
     },
     "fall": {
+      "page": 0,
       "x": 0,
-      "y": 2494,
+      "y": 977,
       "cw": 485,
       "ch": 573,
       "frames": 8,
@@ -69,8 +101,9 @@
       "src": "succubus"
     },
     "land": {
+      "page": 1,
       "x": 0,
-      "y": 3067,
+      "y": 1620,
       "cw": 449,
       "ch": 430,
       "frames": 8,
@@ -79,8 +112,9 @@
       "src": "succubus"
     },
     "guard": {
+      "page": 3,
       "x": 0,
-      "y": 3497,
+      "y": 1527,
       "cw": 390,
       "ch": 431,
       "frames": 8,
@@ -89,8 +123,9 @@
       "src": "succubus"
     },
     "hurt": {
+      "page": 2,
       "x": 0,
-      "y": 3928,
+      "y": 0,
       "cw": 440,
       "ch": 538,
       "frames": 8,
@@ -99,8 +134,9 @@
       "src": "succubus"
     },
     "death": {
+      "page": 0,
       "x": 0,
-      "y": 4466,
+      "y": 536,
       "cw": 507,
       "ch": 441,
       "frames": 8,
@@ -109,8 +145,9 @@
       "src": "succubus"
     },
     "grabbed": {
+      "page": 4,
       "x": 0,
-      "y": 4907,
+      "y": 0,
       "cw": 369,
       "ch": 530,
       "frames": 8,
@@ -119,8 +156,9 @@
       "src": "succubus"
     },
     "claw1": {
+      "page": 3,
       "x": 0,
-      "y": 5437,
+      "y": 0,
       "cw": 414,
       "ch": 543,
       "frames": 8,
@@ -129,8 +167,9 @@
       "src": "succubus_attack"
     },
     "claw2": {
+      "page": 1,
       "x": 0,
-      "y": 5980,
+      "y": 546,
       "cw": 478,
       "ch": 505,
       "frames": 8,
@@ -139,8 +178,9 @@
       "src": "succubus_attack"
     },
     "wingslap": {
+      "page": 1,
       "x": 0,
-      "y": 6485,
+      "y": 1051,
       "cw": 477,
       "ch": 569,
       "frames": 8,
@@ -149,8 +189,9 @@
       "src": "succubus_attack"
     },
     "divekick": {
+      "page": 2,
       "x": 0,
-      "y": 7054,
+      "y": 538,
       "cw": 437,
       "ch": 530,
       "frames": 8,
@@ -159,8 +200,9 @@
       "src": "succubus_attack"
     },
     "drain": {
+      "page": 2,
       "x": 0,
-      "y": 7584,
+      "y": 1068,
       "cw": 421,
       "ch": 469,
       "frames": 8,
@@ -169,8 +211,9 @@
       "src": "succubus_attack"
     },
     "crouch": {
+      "page": 2,
       "x": 0,
-      "y": 8053,
+      "y": 1537,
       "cw": 418,
       "ch": 431,
       "frames": 8,

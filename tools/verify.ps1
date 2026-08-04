@@ -13,7 +13,8 @@ $PICKS = @(0, 3, 7)
 
 foreach ($id in @('swordsman', 'berserker', 'mage')) {
   $man = Get-Content "$ASSETS\$id.json" -Raw -Encoding UTF8 | ConvertFrom-Json
-  $atlas = [System.Drawing.Image]::FromFile("$ASSETS\$($man.image)")
+  # The atlas is split across pages; each animation says which one it is on.
+  $atlasPages = @($man.images | ForEach-Object { [System.Drawing.Image]::FromFile("$ASSETS\$_") })
   $names = @($man.animations.PSObject.Properties.Name)
 
   $W = 120 + $CELLW * $PICKS.Count
@@ -39,7 +40,7 @@ foreach ($id in @('swordsman', 'berserker', 'mage')) {
       # anchor lands on (CX, BASE) inside the cell
       $dx = $cellX + $CX - $a.ax
       $dy = $top + $BASE - $a.ay
-      $g.DrawImage($atlas,
+      $g.DrawImage($atlasPages[$a.page],
         (New-Object System.Drawing.Rectangle([int]$dx, [int]$dy, [int]$a.cw, [int]$a.ch)),
         ($a.x + $i * $a.cw), $a.y, $a.cw, $a.ch, [System.Drawing.GraphicsUnit]::Pixel)
       $g.DrawLine($axisPen, ($cellX + $CX), $top, ($cellX + $CX), ($top + $CELLH))
@@ -47,7 +48,8 @@ foreach ($id in @('swordsman', 'berserker', 'mage')) {
     }
     $row++
   }
-  $g.Dispose(); $atlas.Dispose()
+  $g.Dispose()
+  foreach ($p in $atlasPages) { $p.Dispose() }
   $bmp.Save("$Out\verify_$id.png", [System.Drawing.Imaging.ImageFormat]::Png)
   $bmp.Dispose()
   Write-Host "wrote verify_$id.png"

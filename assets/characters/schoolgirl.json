@@ -1,16 +1,28 @@
 {
   "id": "schoolgirl",
-  "image": "schoolgirl.webp",
-  "atlasWidth": 2824,
-  "atlasHeight": 5044,
+  "images": [
+    "schoolgirl-0.webp",
+    "schoolgirl-1.webp"
+  ],
+  "pages": [
+    {
+      "w": 2824,
+      "h": 2763
+    },
+    {
+      "w": 1464,
+      "h": 2281
+    }
+  ],
   "sourceFps": 10,
   "scale": 0.69808,
   "height": 200,
   "texelsPerUnit": 2,
   "animations": {
     "idle": {
+      "page": 1,
       "x": 0,
-      "y": 0,
+      "y": 1135,
       "cw": 160,
       "ch": 409,
       "frames": 8,
@@ -19,8 +31,9 @@
       "src": "jkgirl"
     },
     "walk": {
+      "page": 1,
       "x": 0,
-      "y": 409,
+      "y": 748,
       "cw": 166,
       "ch": 387,
       "frames": 8,
@@ -29,8 +42,9 @@
       "src": "jkgirl"
     },
     "jump": {
+      "page": 0,
       "x": 0,
-      "y": 796,
+      "y": 393,
       "cw": 227,
       "ch": 472,
       "frames": 8,
@@ -39,8 +53,9 @@
       "src": "jkgirl"
     },
     "fall": {
+      "page": 1,
       "x": 0,
-      "y": 1268,
+      "y": 1544,
       "cw": 213,
       "ch": 316,
       "frames": 5,
@@ -49,8 +64,9 @@
       "src": "jkgirl"
     },
     "land": {
+      "page": 1,
       "x": 0,
-      "y": 1584,
+      "y": 0,
       "cw": 183,
       "ch": 371,
       "frames": 8,
@@ -59,8 +75,9 @@
       "src": "jkgirl"
     },
     "guard": {
+      "page": 0,
       "x": 0,
-      "y": 1955,
+      "y": 2000,
       "cw": 195,
       "ch": 382,
       "frames": 8,
@@ -69,8 +86,9 @@
       "src": "jkgirl"
     },
     "hurt": {
+      "page": 1,
       "x": 0,
-      "y": 2337,
+      "y": 371,
       "cw": 179,
       "ch": 377,
       "frames": 8,
@@ -79,8 +97,9 @@
       "src": "jkgirl"
     },
     "point": {
+      "page": 0,
       "x": 0,
-      "y": 2714,
+      "y": 1623,
       "cw": 200,
       "ch": 377,
       "frames": 8,
@@ -89,8 +108,9 @@
       "src": "jkgirl_extra"
     },
     "photo": {
+      "page": 0,
       "x": 0,
-      "y": 3091,
+      "y": 1244,
       "cw": 202,
       "ch": 379,
       "frames": 8,
@@ -99,8 +119,9 @@
       "src": "jkgirl_extra"
     },
     "crouch": {
+      "page": 0,
       "x": 0,
-      "y": 3470,
+      "y": 2382,
       "cw": 191,
       "ch": 381,
       "frames": 8,
@@ -109,8 +130,9 @@
       "src": "jkgirl_crouch"
     },
     "run2": {
+      "page": 0,
       "x": 0,
-      "y": 3851,
+      "y": 865,
       "cw": 205,
       "ch": 379,
       "frames": 8,
@@ -119,8 +141,9 @@
       "src": "jkgirl_v2"
     },
     "death2": {
+      "page": 0,
       "x": 0,
-      "y": 4230,
+      "y": 0,
       "cw": 353,
       "ch": 393,
       "frames": 8,
@@ -129,8 +152,9 @@
       "src": "jkgirl_v2"
     },
     "grabbed": {
+      "page": 1,
       "x": 0,
-      "y": 4623,
+      "y": 1860,
       "cw": 127,
       "ch": 421,
       "frames": 8,

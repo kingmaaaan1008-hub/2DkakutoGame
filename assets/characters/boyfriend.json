@@ -1,16 +1,23 @@
 {
   "id": "boyfriend",
-  "image": "boyfriend.webp",
-  "atlasWidth": 2584,
-  "atlasHeight": 872,
+  "images": [
+    "boyfriend-0.webp"
+  ],
+  "pages": [
+    {
+      "w": 2584,
+      "h": 872
+    }
+  ],
   "sourceFps": 10,
   "scale": 0.7919,
   "height": 215,
   "texelsPerUnit": 2,
   "animations": {
     "run": {
+      "page": 0,
       "x": 0,
-      "y": 0,
+      "y": 430,
       "cw": 288,
       "ch": 442,
       "frames": 8,
@@ -19,8 +26,9 @@
       "src": "jkboy"
     },
     "tackle": {
+      "page": 0,
       "x": 0,
-      "y": 442,
+      "y": 0,
       "cw": 323,
       "ch": 430,
       "frames": 8,
