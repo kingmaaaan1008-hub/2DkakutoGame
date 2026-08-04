@@ -17,7 +17,18 @@
 # =============================================================================
 param(
   [string]$Src = "C:\Claude_projects\SpriteSheetCreater\output_sprite",
-  [string]$Out = "$PSScriptRoot\..\.build\atlas"
+  [string]$Out = "$PSScriptRoot\..\.build\atlas",
+  # Texels stored per world unit. 1 means the atlas holds exactly the on-screen
+  # size at zoom 1 -- but the game zooms in on desktop (about 1.4x on a 720p
+  # window, up to ~3.4x on a retina laptop), so at 1 the sprites are magnified
+  # at draw time and look soft. Raising this stores more detail; the manifest
+  # carries the factor and the renderer divides it back out, so world units,
+  # anchors and hit boxes are unaffected. Above ~2 there is nothing left to
+  # gain: the raw sheets only hold about 2x the on-screen height.
+  #
+  # 2 is what ships. Do not lower it without rebuilding, or the atlases and the
+  # manifests they are read with will disagree about how big a texel is.
+  [double]$Supersample = 2
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,6 +50,14 @@ $GROUNDRATIO = 0.12  # a row counts as "the character" at 12% of the busiest row
 # dx / dy      : manual nudge in source px, applied after the automatic anchor
 # skip         : animations in that sheet to leave out of the atlas, for poses
 #                that were redrawn on a later sheet and are no longer used
+# stabilizeX   : animations to re-centre horizontally, frame by frame. Normally one
+#                anchor per sheet is enough, because the character stays put in the
+#                source clip. Clips where she travels (a flight move filmed moving
+#                across the frame) drift instead, and the drift shows up in game as
+#                the character jittering left and right while the loop plays. For
+#                these, each frame is shifted so its own silhouette lands on the
+#                sheet anchor, which pins the body in place and leaves only the
+#                intended motion (wings, limbs).
 $CONFIG = @(
   @{
     id = 'swordsman'; targetHeight = 215; anchorMetric = 'body'
@@ -84,7 +103,8 @@ $CONFIG = @(
     # mirror match), so only the attack and crouch sheets are separate.
     id = 'succubus'; targetHeight = 205; anchorMetric = 'body'
     sheets = @(
-      @{ file = 'succubus';        ref = 'idle';   dx = 0; dy = 0 },
+      # 'move' is the dashing flight loop; she crosses the frame while it is filmed.
+      @{ file = 'succubus';        ref = 'idle';   dx = 0; dy = 0; stabilizeX = @('move') },
       @{ file = 'succubus_attack'; ref = 'claw1';  dx = 0; dy = 0 },
       @{ file = 'succubus_crouch'; ref = 'crouch'; dx = 0; dy = 0 }
     )
@@ -149,7 +169,7 @@ foreach ($cfg in $CONFIG) {
   }
 
   # 2. one scale for the whole character, derived from the first sheet's reference pose
-  $scale = $cfg.targetHeight / $loaded[0].refHeight
+  $scale = ($cfg.targetHeight * $Supersample) / $loaded[0].refHeight
   $pad = [math]::Ceiling(2.0 / $scale)   # keeps bilinear sampling off the crop edge
   Write-Host ("  scale={0}  pad={1}px" -f [math]::Round($scale, 4), $pad)
 
@@ -166,25 +186,48 @@ foreach ($cfg in $CONFIG) {
         throw "$($cfg.id): animation name '$name' appears in more than one sheet"
       }
       $anim = $p.Value
-      $minX = [int]::MaxValue; $minY = [int]::MaxValue; $maxX = -1; $maxY = -1
+      $fw = $anim.frameRects[0].w; $fh = $anim.frameRects[0].h
+
+      # per-frame horizontal correction, in source px. Zero unless stabilised.
+      $shift = @()
       foreach ($rc in $anim.frameRects) {
-        $b = Get-FrameBBox $L.sheet $rc
+        if ($L.cfg.stabilizeX -and ($L.cfg.stabilizeX -contains $name)) {
+          $mx = $L.sheet.MedianX($rc.x, $rc.y, $rc.w, $rc.h, $THR) - $rc.x
+          $shift += [int][math]::Round($mx - $L.anchorX)
+        } else {
+          $shift += 0
+        }
+      }
+
+      # union of the frame boxes, measured after the correction
+      $minX = [int]::MaxValue; $minY = [int]::MaxValue; $maxX = -1; $maxY = -1
+      for ($i = 0; $i -lt $anim.frameRects.Count; $i++) {
+        $b = Get-FrameBBox $L.sheet $anim.frameRects[$i]
         if (-not $b) { continue }
-        if ($b.x -lt $minX) { $minX = $b.x }
+        $bx = $b.x - $shift[$i]
+        if ($bx -lt $minX) { $minX = $bx }
         if ($b.y -lt $minY) { $minY = $b.y }
-        if (($b.x + $b.w) -gt $maxX) { $maxX = $b.x + $b.w }
+        if (($bx + $b.w) -gt $maxX) { $maxX = $bx + $b.w }
         if (($b.y + $b.h) -gt $maxY) { $maxY = $b.y + $b.h }
       }
-      $fw = $anim.frameRects[0].w; $fh = $anim.frameRects[0].h
-      $ux = [math]::Max(0, $minX - $pad)
+
+      # The crop is read at ux + shift, so it has to stay inside the frame for
+      # every frame; otherwise a shifted read would pull in the neighbouring one.
+      $sMin = ($shift | Measure-Object -Minimum).Minimum
+      $sMax = ($shift | Measure-Object -Maximum).Maximum
+      $loX = [math]::Max(0, -$sMin)
+      $hiX = $fw - [math]::Max(0, $sMax)
+      $ux = [math]::Max($loX, $minX - $pad)
       $uy = [math]::Max(0, $minY - $pad)
-      $uw = [math]::Min($fw, $maxX + $pad) - $ux
+      $uw = [math]::Min($hiX, $maxX + $pad) - $ux
       $uh = [math]::Min($fh, $maxY + $pad) - $uy
+      if ($uw -le 0) { throw "$($cfg.id)/${name}: stabilizeX の補正が大きすぎてコマに収まらない" }
 
       $rows += @{
         name   = $name
         L      = $L
         anim   = $anim
+        shift  = $shift
         ux     = $ux; uy = $uy; uw = $uw; uh = $uh
         cw     = [int][math]::Ceiling($uw * $scale)
         ch     = [int][math]::Ceiling($uh * $scale)
@@ -211,7 +254,7 @@ foreach ($cfg in $CONFIG) {
     for ($i = 0; $i -lt $r.frames; $i++) {
       $rc = $r.anim.frameRects[$i]
       $canvas.Blit($r.L.sheet,
-        ($rc.x + $r.ux), ($rc.y + $r.uy), $r.uw, $r.uh,
+        ($rc.x + $r.ux + $r.shift[$i]), ($rc.y + $r.uy), $r.uw, $r.uh,
         ($r.x + $i * $r.cw), $r.y, $r.cw, $r.ch)
     }
   }
@@ -236,6 +279,8 @@ foreach ($cfg in $CONFIG) {
     sourceFps  = $loaded[0].meta.fps
     scale      = [math]::Round($scale, 5)
     height     = $cfg.targetHeight
+    # cw/ch/ax/ay はテクセル単位。ワールド単位に戻すにはこれで割る。
+    texelsPerUnit = $Supersample
     animations = $anims
   }
   $jsonPath = Join-Path $Out "$($cfg.id).json"

@@ -61,7 +61,9 @@ export function drawFighterSprite(ctx, sprite, anim, screenX, screenY, facing, z
   if (!resolved) return;
   const { cell, index } = resolved;
 
-  const z = zoom * scale;
+  // アトラスは 1 ワールド単位あたり texelsPerUnit テクセルで焼いてある。
+  // 表示倍率はそのぶん割り戻す（見た目の大きさは焼き方に依存しない）。
+  const z = (zoom * scale) / (sprite.texelsPerUnit || 1);
   ctx.save();
   ctx.translate(screenX, screenY);
   ctx.scale(facing < 0 ? -z : z, z);
@@ -86,9 +88,10 @@ export function drawStillFrame(ctx, sprite, animName, index, screenX, screenY, s
   const cell = sprite.animations[animName];
   if (!cell) return;
   const i = Math.min(cell.frames - 1, Math.max(0, index));
+  const z = scale / (sprite.texelsPerUnit || 1);
   ctx.save();
   ctx.translate(screenX, screenY);
-  ctx.scale(facing < 0 ? -scale : scale, scale);
+  ctx.scale(facing < 0 ? -z : z, z);
   ctx.drawImage(
     sprite.image,
     cell.x + i * cell.cw,
