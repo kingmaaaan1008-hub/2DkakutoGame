@@ -163,12 +163,13 @@ export class Renderer {
     // 魔法陣は足元に敷くものなので、キャラより先に描いて下に潜らせる。
     for (const f of sim.fighters) this._drawShadow(f);
     for (const fx of sim.effects) if (GROUND_EFFECTS.has(fx.type)) this._drawEffect(fx, sim);
-    // 低い方から重ねる。ただし掴まれている側は必ず先に（＝奥に）描く。
-    // 掴まれた相手は宙に浮くので y 順だと手前に来てしまい、
-    // 吸っている淫魔が相手の陰に完全に隠れてしまうため。
+    // 低い方から重ねる。ただし掴まれている側は必ず最後に（＝手前に）描く。
+    // 吸血は相手に顔を埋めて吸う画なので、掴んだ淫魔の顔は相手の陰に
+    // 入るのが正しい。掴まれた相手は宙に浮くため y 順でもたいてい手前に
+    // 来るが、保持位置の高さに依存させたくないので明示的に並べている。
     const order = sim.fighters
       .slice()
-      .sort((p, q) => (q.isGrabbed ? 1 : 0) - (p.isGrabbed ? 1 : 0) || p.y - q.y);
+      .sort((p, q) => (p.isGrabbed ? 1 : 0) - (q.isGrabbed ? 1 : 0) || p.y - q.y);
     for (const f of order) this._drawFighter(f);
     for (const p of sim.projectiles) this._drawProjectile(p, sim);
     for (const fx of sim.effects) if (!GROUND_EFFECTS.has(fx.type)) this._drawEffect(fx, sim);

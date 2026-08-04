@@ -1028,8 +1028,22 @@ section('淫魔の飛行');
   run(sim, 1, BTN.SKILL);
   check('滞空から急降下を出せる', p1.moveId === 'diveKick', `move=${p1.moveId}`);
   check('技を出すと滞空は終わる', p1.hoverTicks === 0, `hover=${p1.hoverTicks}`);
+
+  // divekick シートは脚を引く順で撮れているので逆再生で出す。
+  // 出だしは脚を畳んだ最終コマ、蹴り足が伸びた先頭コマで終わる。
+  const { resolveFrame } = await import('../src/render/spritebank.js');
+  const { readFileSync: readSheet } = await import('node:fs');
+  const succubusSheet = JSON.parse(
+    readSheet(new URL('../assets/characters/succubus.json', import.meta.url), 'utf8'));
+  const kickFrame = () => resolveFrame(p1.anim, succubusSheet).index;
+  check('急降下は逆再生で出す', p1.anim.reverse === true, `reverse=${p1.anim.reverse}`);
+  check('出だしは脚を畳んだコマ', kickFrame() === 7, `frame=${kickFrame()}`);
   run(sim, 8, 0);
   check('急降下は落ちていく', p1.vy < 0, `vy=${p1.vy.toFixed(2)}`);
+  run(sim, 10, 0);
+  // 抜き残りのある先頭コマは使わないので、伸び切りは 1 コマ目で止まる
+  check('落ちきる前に蹴り足が伸び切る', kickFrame() === 1, `frame=${kickFrame()}`);
+  check('伸ばしたまま落ちていく', p1.moveId === 'diveKick' && p1.vy < 0, `move=${p1.moveId}`);
 }
 
 // ── 淫魔（掴み） ────────────────────────────────────────────
@@ -1052,10 +1066,18 @@ section('淫魔の吸血');
   // 保持位置に固定される
   const hold = p1.def.moves.drainHold.grabHold;
   run(sim, 10, 0, BTN.GUARD);
-  check('掴まれた相手は宙に浮く', p2.y === hold.y, `y=${p2.y}`);
+  check('掴まれた相手は宙に浮く', p2.y === hold.y && hold.y > 0, `y=${p2.y}`);
   check('掴まれた相手は目の前に固定される',
     Math.abs(p2.x - (p1.x + p1.facing * hold.x)) < 0.001,
     `x=${p2.x.toFixed(1)} 期待=${(p1.x + p1.facing * hold.x).toFixed(1)}`);
+  // 吸っている口元（drain シートで実測した足元からの位置）が相手の体に届くこと。
+  // 保持位置を動かすとまず最初にここが外れる。
+  const MOUTH = { x: 38, y: 160 };
+  const mouthX = p1.x + p1.facing * MOUTH.x;
+  const hb = p2.hurtBox();
+  check('口元が相手の体に重なる',
+    mouthX > hb.x && mouthX < hb.x + hb.w && MOUTH.y > hb.y && MOUTH.y < hb.y + hb.h,
+    `口元=(${(mouthX - p1.x).toFixed(0)},${MOUTH.y}) 相手=${(hb.x - p1.x).toFixed(0)}〜${(hb.x + hb.w - p1.x).toFixed(0)} / ${hb.y}〜${(hb.y + hb.h).toFixed(0)}`);
   check('掴まれた相手は掴んだ側を向く', p2.facing === -p1.facing,
     `p1=${p1.facing} p2=${p2.facing}`);
   check('掴まれている間の絵は grabbed', p2.anim.name === 'grabbed', `anim=${p2.anim.name}`);
@@ -1138,7 +1160,22 @@ section('淫魔の吸血');
   check('攻撃で引っ掻きが出る', p1.moveId === 'claw1', `move=${p1.moveId}`);
   run(sim, 9, 0);
   run(sim, 1, BTN.ATTACK);
+  // atEnd の連携なので、押した時点では 1 段目は切れない（受付だけ済ませる）
+  check('押した時点では1段目は切れない', p1.moveId === 'claw1', `move=${p1.moveId}`);
+  check('2段目を予約している', p1.chainQueued === 'claw2', `queued=${p1.chainQueued}`);
+  run(sim, 16, 0);
+  check('出し切るまで1段目のまま', p1.moveId === 'claw1' && p1.moveFrame === 25,
+    `move=${p1.moveId} frame=${p1.moveFrame}`);
+  run(sim, 1, 0);
   check('引っ掻きは2段目に繋がる', p1.moveId === 'claw2', `move=${p1.moveId}`);
+  check('2段目は先頭から始まる', p1.moveFrame === 0, `frame=${p1.moveFrame}`);
+}
+
+{
+  // 段ごとに使うシートを入れ替えてある（1段目=claw2 の絵 / 2段目=claw1 の絵）
+  const def = getCharacter('succubus');
+  check('1段目はその場で振る絵', def.moves.claw1.anim === 'claw2', def.moves.claw1.anim);
+  check('2段目は踏み込む絵', def.moves.claw2.anim === 'claw1', def.moves.claw2.anim);
 }
 
 {
@@ -1211,6 +1248,34 @@ for (const [id, attack, skill] of [
   for (let i = 0; i < 40 && p1.comboDisplay < 1; i += 1) run(sim, 1, BTN.RIGHT);
   check('飛び斬りが地上の相手に当たる', p2.doomed || p2.isKO,
     `hits=${p1.comboDisplay} state=${p2.state}`);
+}
+
+{
+  // 急降下は判定を真下に絞ってあるので、前に置いておく技としては使えない。
+  // 相手の上まで運んでから落とせば当たる。
+  const sim = newSim(['succubus', 'swordsman']);
+  place(sim, 760, 940);
+  const [p1, p2] = sim.fighters;
+  run(sim, 1, BTN.UP | BTN.RIGHT);
+  run(sim, 16, BTN.RIGHT);
+  run(sim, 1, BTN.SKILL | BTN.RIGHT);
+  check('急降下が出る', p1.moveId === 'diveKick', `move=${p1.moveId}`);
+  for (let i = 0; i < 60 && p1.comboDisplay < 1; i += 1) run(sim, 1, BTN.RIGHT);
+  check('急降下が地上の相手に当たる', p2.doomed || p2.isKO,
+    `hits=${p1.comboDisplay} state=${p2.state}`);
+
+  // 判定そのものの形。前へ伸ばす技ではなく、足元を踏み抜く技になっていること
+  const box = getCharacter('succubus').moves.diveKick.hits[0].box;
+  const { HURTBOX, PUSHBOX_W } = await import('../src/game/fighter.js');
+  const front = HURTBOX.x + HURTBOX.w;
+  check('自分のやられ判定より少しだけ前に出る', box.x + box.w > front && box.x + box.w <= front + 20,
+    `前端=${box.x + box.w} やられ判定の前端=${front}`);
+  check('後ろは自分の幅から出ない', box.x >= HURTBOX.x, `後端=${box.x}`);
+  // 密着時の中心間距離は PUSHBOX_W。そこから相手のやられ判定の手前端までは届くこと
+  check('密着でも届く前端はある', box.x + box.w > PUSHBOX_W + HURTBOX.x,
+    `前端=${box.x + box.w} 密着時の相手の手前端=${PUSHBOX_W + HURTBOX.x}`);
+  check('足元より下から判定が出る', box.y < 0, `下端=${box.y}`);
+  check('腰より上には判定が無い', box.y + box.h <= 110, `上端=${box.y + box.h}`);
 }
 
 {

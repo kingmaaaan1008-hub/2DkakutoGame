@@ -83,6 +83,12 @@ export class Fighter {
     /** いま出している技が空中技か（着地で中断されるのはこれだけ）。 */
     this.moveAir = false;
     this.usedGroups = [];
+    /**
+     * atEnd 指定の連携で予約された次の技。技を出し切った時点で出る。
+     * 読むのは _stepMove の終端だけで、技を出すたびに消えるので、
+     * 中断された技の予約が後から生き返ることはない。
+     */
+    this.chainQueued = null;
 
     this.hitstop = 0;
     this.landLag = LAND_LAG;
@@ -333,6 +339,7 @@ export class Fighter {
     this.moveHitLanded = false;
     this.moveAir = this.airborne;
     this.usedGroups = [];
+    this.chainQueued = null;
     // 技を出したら滞空は終わり（滞空から急降下、という繋ぎを作るため）
     this.hoverTicks = 0;
     // 空中技は跳んだ勢いを残す（地上技はその場で止まる）
@@ -341,6 +348,7 @@ export class Fighter {
       fps: move.animFps ?? 0,
       stretch: move.animFps ? 0 : move.total,
       range: move.animRange,
+      reverse: move.animReverse,
       hold: true,
       restart: true,
     });
@@ -684,12 +692,14 @@ export class Fighter {
     // ここで 1 ティック空けると、その間だけ技の移動指定が効かず、
     // 重力だけが掛かってしまう（浮遊照射が繋ぎ目でカクッと落ちる）。
     // ループ回数の上限は onEnd を辿れる深さの保険（万一循環していても止まる）。
+    // 予約済みの連携（atEnd）は onEnd より優先する。押した側の意思なので。
     for (let guard = 0; this.moveFrame >= move.total; guard += 1) {
-      if (!move.onEnd || guard >= 4) {
+      const next = this.chainQueued ?? move.onEnd;
+      if (!next || guard >= 4) {
         this._toIdle();
         return;
       }
-      this.startMove(move.onEnd, opponent);
+      this.startMove(next, opponent);
       move = this.currentMove();
       this.moveFrame = 0;
     }
@@ -718,6 +728,11 @@ export class Fighter {
     for (const c of move.chains) {
       if (this.moveFrame < c.from || this.moveFrame > c.to) continue;
       if (this._takeBuffered(c.button)) {
+        // atEnd は技を途中で切らず、出し切ってから次へ移る
+        if (c.atEnd) {
+          this.chainQueued = c.move;
+          break;
+        }
         this.startMove(c.move, opponent);
         return;
       }
@@ -993,7 +1008,7 @@ export class Fighter {
     return [
       this.x, this.y, this.vx, this.vy, this.facing, this.health,
       this.state, this.stateTimer, this.moveId, this.moveFrame,
-      this.moveHitLanded, this.moveAir, this.usedGroups.slice(),
+      this.moveHitLanded, this.moveAir, this.usedGroups.slice(), this.chainQueued,
       this.hitstop, this.landLag, this.downPhase, this.airJumps, this.doomed,
       this.crouchTimer, this.hoverTicks, this.grabbedBy,
       this.guardHeld, this.walkDir, this.dashDir, this.prevInput,
@@ -1012,6 +1027,7 @@ export class Fighter {
     this.facing = s[i++]; this.health = s[i++];
     this.state = s[i++]; this.stateTimer = s[i++]; this.moveId = s[i++]; this.moveFrame = s[i++];
     this.moveHitLanded = s[i++]; this.moveAir = s[i++]; this.usedGroups = s[i++].slice();
+    this.chainQueued = s[i++];
     this.hitstop = s[i++]; this.landLag = s[i++]; this.downPhase = s[i++];
     this.airJumps = s[i++]; this.doomed = s[i++]; this.crouchTimer = s[i++];
     this.hoverTicks = s[i++]; this.grabbedBy = s[i++];
