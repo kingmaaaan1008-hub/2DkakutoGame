@@ -290,6 +290,8 @@ async function connectOnline() {
  *   実際の位置関係を見るのは、空中で相手に背を向けている間も
  *   弾いた向きと出る技が食い違わないようにするため。
  * - `airborne`: 空中かどうか。空中では横スワイプもジャンプになる。
+ * - `hovering`: 飛行で滞空しているか。滞空だけは横入力がそのまま速度になるので、
+ *   空中でも横スワイプをジャンプに変えない。
  */
 function updateInputContext() {
   const me = app.mode === 'online' ? (app.onlineSlot ?? 0) : 0;
@@ -298,6 +300,7 @@ function updateInputContext() {
   const foe = me === 0 ? b : a;
   app.input.aimDir[0] = foe.x >= self.x ? 1 : -1;
   app.input.airborne[0] = self.airborne;
+  app.input.hovering[0] = self.hoverTicks > 0;
 }
 
 function update() {

@@ -90,6 +90,15 @@ export class InputManager {
      */
     this.airborne = [false, false];
     /**
+     * 飛行（淫魔の滞空）中か。これも毎フレーム試合の状況から入れ直してもらう。
+     *
+     * 空中でも滞空中だけは別扱いになる。滞空は横入力がそのまま速度になるので、
+     * 地上と同じ「触っている間ずっとその向きへ」で動かせる。
+     * ここで横スワイプをジャンプに変えてしまうと、動かすたびに飛行の残り回数が
+     * 減っていき、撃ち止めると横に動けなくなる。
+     */
+    this.hovering = [false, false];
+    /**
      * 前回の poll 以降に「押された」ビット。
      * 1/60 秒より短いタップは押下と解放が同じフレームの隙間に収まってしまい、
      * そのままだとシミュレーションが一度も押下を観測できない。
@@ -167,6 +176,8 @@ export class InputManager {
       /** この指で一度でもスワイプを認識したか。タップの判定に使う。 */
       let swiped = false;
       let downAt = 0;
+      /** その指の「いまの弾き」の状態。_applySwipe が見張る。 */
+      const flick = { jumped: false };
 
       this._zones.push({ el, cue });
 
@@ -184,6 +195,7 @@ export class InputManager {
         }
         tracker.start(e.clientX, e.clientY);
         swiped = false;
+        flick.jumped = false;
         downAt = e.timeStamp;
         el.classList.add('is-touched');
       };
@@ -194,11 +206,10 @@ export class InputManager {
         const hit = tracker.move(e.clientX, e.clientY, e.timeStamp);
         if (!hit) return;
         swiped = true;
-        this._showCue(
-          el,
-          cue,
-          kind === 'move' ? this._applyMoveSwipe(slot, hit) : this._applyActionSwipe(slot, hit)
-        );
+        const out = this._applySwipe(flick, slot, kind, hit);
+        // 止めたぶんは何も起きなかったことにする
+        // （表示まで消すと、直前に出したジャンプの合図が掻き消えてしまう）
+        if (out) this._showCue(el, cue, out);
       };
 
       /** @param {boolean} tappable pointerup か（pointercancel では技を出さない） */
@@ -234,6 +245,31 @@ export class InputManager {
   }
 
   /**
+   * 認識したスワイプ1件をビットに落とす。エリアごとの振り分けと、
+   * **1回の弾きで跳ぶのは1回だけ**という見張りをここでまとめている。
+   *
+   * 指はまっすぐ動かないので、斜めに弾くと弧を描いて後半が別の向きへ流れる。
+   * その後半が新しいスワイプとして拾われると、跳んだ直後にもう一度跳んでしまい、
+   * 斜めジャンプのつもりで2段ジャンプまで使い切ることになる。
+   * 指を戻して弾き直せば（fresh なスワイプ）また跳べるので、
+   * 続けて跳ぶ操作そのものは塞がない。
+   *
+   * @param {{jumped: boolean}} flick その指の「いまの弾き」の状態
+   * @param {'move'|'action'} kind エリアの種類
+   * @returns {{cue: string, rest: string} | null} 何もしなかったときは null
+   */
+  _applySwipe(flick, slot, kind, hit) {
+    // 指を戻して構え直したところからの弾きなら、ジャンプを解禁する
+    if (hit.fresh) flick.jumped = false;
+    const out =
+      kind === 'move'
+        ? this._applyMoveSwipe(slot, hit, !flick.jumped)
+        : this._applyActionSwipe(slot, hit);
+    if (out?.jumped) flick.jumped = true;
+    return out;
+  }
+
+  /**
    * 移動エリアのスワイプをビットに落とす。
    *
    * 横と下は「触っている間ずっと」なので押しっぱなしのビットにする。
@@ -243,17 +279,21 @@ export class InputManager {
    *
    * @param {{gesture: string, dist: number}} swipe dist は弾いた距離。
    *   横は小さく弾けば歩き、大きく弾けば走りになる。
-   * @returns {{cue: string, rest: string}} 出す表示と、それが消えた後に戻る表示
+   * @param {boolean} allowJump 跳んでよいか。1回の弾きで2度跳ばないよう、
+   *   同じ弾きの続きで2度目のジャンプになるときだけ false が来る。
+   * @returns {{cue: string, rest: string, jumped?: boolean} | null}
+   *   出す表示と、それが消えた後に戻る表示。跳べずに何もしなかったときは null。
    */
-  _applyMoveSwipe(slot, { gesture, dist }) {
+  _applyMoveSwipe(slot, { gesture, dist }, allowJump = true) {
     const held = BTN.LEFT | BTN.RIGHT | BTN.DOWN | BTN.DASH;
     const bits = this.touchBits[slot];
 
     if (gesture === GESTURE.UP) {
+      if (!allowJump) return null;
       // 方向を落として真上に跳ぶ
       this.touchBits[slot] = bits & ~held;
       this.latch[slot] |= BTN.UP;
-      return { cue: 'jumpUp', rest: '' };
+      return { cue: 'jumpUp', rest: '', jumped: true };
     }
     if (gesture === GESTURE.DOWN) {
       this.touchBits[slot] = (bits & ~held) | BTN.DOWN;
@@ -269,18 +309,31 @@ export class InputManager {
     if (dirBit === 0) return { cue: '', rest: '' };
     const side = dirBit === BTN.LEFT ? 'Left' : 'Right';
 
+    // 跳ぶための弾きの長さで地上の速さまで変わると分かりづらいので、
+    // 空中では同じ向きへ走っていたぶんだけ保つ（着地してまた走れる）
+    const running = (bits & BTN.DASH) !== 0 && (bits & dirBit) !== 0;
+
     // 斜め上は跳ぶ。横も、空中なら跳ぶ
     // （空中では横入力で速度が変わらないので、そのままでは空振りになる。
     //  空中の移動手段はジャンプだけなので、横スワイプもジャンプとして扱う）
+    //
+    // ただし飛行中（滞空）は例外で、横入力がそのまま速度になる。
+    // ここでジャンプに変えると横に動くたびに飛行の回数を食い潰してしまうので、
+    // 地上と同じ「触っている間ずっとその向きへ」で扱う。
     const diagonal = gesture === GESTURE.UP_LEFT || gesture === GESTURE.UP_RIGHT;
-    if (diagonal || this.airborne[slot]) {
-      // 跳ぶための弾きの長さで地上の速さまで変わると分かりづらいので、
-      // 同じ向きへ走っていたならそのまま走りを保つ（着地してまた走れる）
-      const running = (bits & BTN.DASH) !== 0 && (bits & dirBit) !== 0;
+    if (diagonal || (this.airborne[slot] && !this.hovering[slot])) {
+      if (!allowJump) return null;
       // ジャンプと同じフレームに方向が要る（跳んだ瞬間の向きで軌道が決まる）
       this.touchBits[slot] = (bits & ~held) | dirBit | (running ? BTN.DASH : 0);
       this.latch[slot] |= BTN.UP;
-      return { cue: 'jump' + side, rest: (running ? 'dash' : 'walk') + side };
+      return { cue: 'jump' + side, rest: (running ? 'dash' : 'walk') + side, jumped: true };
+    }
+
+    // 飛行中の横。弾いた距離では走りに上げない（飛行の速さは一定なので）
+    if (this.airborne[slot]) {
+      const flying = (running ? 'dash' : 'walk') + side;
+      this.touchBits[slot] = (bits & ~held) | dirBit | (running ? BTN.DASH : 0);
+      return { cue: flying, rest: flying };
     }
 
     // 地上の横スワイプ。弾いた距離だけで決める

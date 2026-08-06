@@ -1557,6 +1557,29 @@ function finger(x0 = 200, y0 = 400) {
       t += ms;
       return hits;
     },
+    /**
+     * 弧を描いて弾く。実際の指はまっすぐ動かず、弾いた向きから流れていく。
+     * @param {number} len 弾く長さ
+     * @param {number} fromDeg 弾き始めの向き（右が 0、上が +90 の度）
+     * @param {number} toDeg 弾き終わりの向き
+     */
+    arc(len, fromDeg, toDeg, steps = 12) {
+      const hits = [];
+      for (let i = 1; i <= steps; i += 1) {
+        const p = i / steps;
+        const deg = ((fromDeg + (toDeg - fromDeg) * p) * Math.PI) / 180;
+        const nx = x + Math.cos(deg) * len * p;
+        const ny = y - Math.sin(deg) * len * p;
+        const hit = tracker.move(nx, ny, t + p * 80);
+        if (hit) hits.push(hit);
+        if (i === steps) {
+          x = nx;
+          y = ny;
+        }
+      }
+      t += 80;
+      return hits;
+    },
     wait(ms) {
       t += ms;
     },
@@ -1682,6 +1705,73 @@ section('横に弾いた直後でもジャンプが出る');
   check('触っていなければ動かしても無反応', t.move(0, 0, 0) === null);
 }
 
+section('1回の弾きで跳ぶのは1回だけ');
+{
+  // 指はまっすぐ動かない。斜めに弾くと弧を描いて後半が別の向きへ流れ、
+  // そこが新しいスワイプとして拾われる。空中では横スワイプもジャンプなので、
+  // 拾ったぶんまで跳んでいると、斜めジャンプのつもりで2段ジャンプまで消える。
+  const cases = [
+    ['右上に弾いて右へ流れる', 60, 20],
+    ['右上に弾いて上へ流れる', 45, 85],
+    ['左上に弾いて左へ流れる', 120, 160],
+    ['左上に弾いて上へ流れる', 135, 95],
+  ];
+  for (const [label, from, to] of cases) {
+    const im = new InputManager();
+    const flick = { jumped: false };
+    const f = finger();
+    const hits = f.arc(90, from, to);
+    let jumps = 0;
+    for (const hit of hits) {
+      im.latch[0] = 0;
+      im._applySwipe(flick, 0, 'move', hit);
+      // 跳んだら以降は空中。空中では横スワイプもジャンプになる
+      if (im.latch[0] & BTN.UP) {
+        jumps += 1;
+        im.airborne[0] = true;
+      }
+    }
+    check(`${label}: 途中で別の向きとして拾われる`, hits.length > 1,
+      hits.map((h) => h.gesture).join(','));
+    check(`${label}: それでもジャンプは1回だけ`, jumps === 1, `${jumps}回`);
+  }
+}
+
+{
+  // 塞ぐのは同じ弾きの続きだけ。指を戻して弾き直せば2段ジャンプは出る。
+  const im = new InputManager();
+  const flick = { jumped: false };
+  const f = finger();
+  const jumped = () => {
+    const v = (im.latch[0] & BTN.UP) !== 0;
+    im.latch[0] = 0;
+    return v;
+  };
+  const feed = (hits) => hits.forEach((h) => im._applySwipe(flick, 0, 'move', h));
+
+  feed(f.drag(20, -50));
+  check('1回目の弾きで跳ぶ', jumped());
+  im.airborne[0] = true;
+  feed(f.drag(-14, 34)); // 指を戻して構え直す
+  check('戻している間は跳ばない', !jumped());
+  feed(f.drag(20, -50)); // 弾き直す
+  check('弾き直せば空中でもう一度跳べる', jumped());
+}
+
+{
+  // 走り出した指をそのまま斜め上へ弾くのは「1発目のジャンプ」なので塞がない
+  const im = new InputManager();
+  const flick = { jumped: false };
+  const f = finger();
+  const feed = (hits) => hits.forEach((h) => im._applySwipe(flick, 0, 'move', h));
+
+  feed(f.drag(-45, 0));
+  check('左へ弾くと歩き出す', (im.touchBits[0] & BTN.LEFT) !== 0, `bits=${im.touchBits[0]}`);
+  im.latch[0] = 0;
+  feed(f.drag(-30, -40));
+  check('指を離さず斜め上へ弾けば跳べる', (im.latch[0] & BTN.UP) !== 0, `latch=${im.latch[0]}`);
+}
+
 // ── スワイプ → 入力ビット ───────────────────────────────────
 // InputManager の振り分けは DOM を触らないので、そのまま呼べる。
 section('スワイプから入力ビットへの振り分け');
@@ -1772,6 +1862,85 @@ section('スワイプから入力ビットへの振り分け');
   check('空中の下スワイプではジャンプしない', latched() === 0);
   check('空中の下スワイプはしゃがみのまま', im.touchBits[0] === BTN.DOWN,
     `bits=${im.touchBits[0]}`);
+}
+
+{
+  // 飛行（淫魔の滞空）中だけは、空中でも横スワイプがジャンプにならない。
+  // 滞空は横入力がそのまま速度になるので、ジャンプに変えると
+  // 横へ動くたびに飛行の残り回数を食い潰して、動かせなくなってしまう。
+  const im = new InputManager();
+  const latched = () => {
+    const v = im.latch[0];
+    im.latch[0] = 0;
+    return v;
+  };
+  const small = SWIPE.THRESHOLD + 2;
+
+  im.airborne[0] = true;
+  im.hovering[0] = true;
+
+  im._applyMoveSwipe(0, { gesture: GESTURE.RIGHT, dist: small });
+  check('滞空中の横スワイプはジャンプにならない', latched() === 0);
+  check('滞空中の横スワイプは向きを押しっぱなしにする', im.touchBits[0] === BTN.RIGHT,
+    `bits=${im.touchBits[0]}`);
+
+  im._applyMoveSwipe(0, { gesture: GESTURE.LEFT, dist: SWIPE.RUN + 2 });
+  check('滞空中は大きく弾いても走りにならない', im.touchBits[0] === BTN.LEFT,
+    `bits=${im.touchBits[0]}`);
+
+  // 高さを取り直す操作は残す
+  im._applyMoveSwipe(0, { gesture: GESTURE.UP_RIGHT, dist: small });
+  check('滞空中でも斜め上スワイプは跳ぶ', latched() === BTN.UP);
+  im._applyMoveSwipe(0, { gesture: GESTURE.UP, dist: small });
+  check('滞空中でも真上スワイプは跳ぶ', latched() === BTN.UP);
+
+  // 滞空が切れれば今までどおり
+  im.hovering[0] = false;
+  im._applyMoveSwipe(0, { gesture: GESTURE.RIGHT, dist: small });
+  check('滞空が切れれば横スワイプはジャンプに戻る', latched() === BTN.UP);
+}
+
+{
+  // 実際の試合で確かめる。上スワイプ3回で滞空に入り、そのまま横へ弾く。
+  const sim = newSim(['succubus', 'swordsman']);
+  const p1 = sim.fighters[0];
+  const im = new InputManager();
+  const sync = () => {
+    im.airborne[0] = p1.airborne;
+    im.hovering[0] = p1.hoverTicks > 0;
+  };
+  const tick = (n = 1) => {
+    for (let i = 0; i < n; i += 1) {
+      sync();
+      sim.step(im.poll());
+    }
+  };
+  const swipe = (gesture) => {
+    sync();
+    im._applyMoveSwipe(0, { gesture, dist: SWIPE.THRESHOLD + 2 });
+  };
+  const lift = () => {
+    im.touchBits[0] = 0;
+  };
+
+  // 1・2段目は跳び上がり。3段目から滞空に変わる
+  swipe(GESTURE.UP); tick(1); lift(); tick(14);
+  swipe(GESTURE.UP); tick(1); lift(); tick(14);
+  swipe(GESTURE.UP); tick(1); lift(); tick(1);
+  check('上スワイプ3回で滞空に入る', p1.hoverTicks > 0, `hover=${p1.hoverTicks}`);
+
+  const left = p1.airJumps;
+  const x0 = p1.x;
+  const y0 = p1.y;
+  swipe(GESTURE.RIGHT); // 弾いたまま指を置いておく
+  tick(20);
+  check('滞空中に横へ弾けば横に動く', p1.x > x0 + 50,
+    `x ${x0.toFixed(0)} -> ${p1.x.toFixed(0)}`);
+  check('横へ動いても飛行の残り回数は減らない', p1.airJumps === left,
+    `${left} -> ${p1.airJumps}`);
+  check('横へ動いても高度は変わらない', Math.abs(p1.y - y0) < 0.001,
+    `y ${y0.toFixed(2)} -> ${p1.y.toFixed(2)}`);
+  check('横へ動いている間も滞空したまま', p1.hoverTicks > 0, `hover=${p1.hoverTicks}`);
 }
 
 {

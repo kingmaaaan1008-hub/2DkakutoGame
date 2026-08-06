@@ -116,8 +116,11 @@ export class SwipeTracker {
 
   /**
    * 指が動いたことを伝える。認識できたときだけ結果を返す。
-   * @returns {{gesture: string, dist: number} | null}
+   * @returns {{gesture: string, dist: number, fresh: boolean} | null}
    *   dist は弾いた向きへの合計距離。横スワイプではこれで歩き／走りが決まる。
+   *   fresh は「指を戻して構え直したところから弾いた」＝新しい弾きかどうか。
+   *   false は同じ弾きの続き（切り返しや引き伸ばし）で、1回の弾きに
+   *   1回きりの入力（ジャンプ）を何度も出さないための目印になる。
    */
   move(x, y, now) {
     if (!this.active) return null;
@@ -126,7 +129,9 @@ export class SwipeTracker {
     const dist = Math.hypot(dx, dy);
 
     if (this.armed) {
-      if (dist >= this.cfg.THRESHOLD) return this._fire(classifySwipe(dx, dy), dist, x, y, dx, dy);
+      if (dist >= this.cfg.THRESHOLD) {
+        return this._fire(classifySwipe(dx, dy), dist, x, y, dx, dy, true);
+      }
       // まだ届いていない。ここで指が向きを変えたら、**折り返した点**を起点に置き直す。
       // 戻している途中の点を起点にすると、そこから引き返して弾いたぶんが
       // 目減りして、次のスワイプが届かなくなる。
@@ -156,7 +161,7 @@ export class SwipeTracker {
     // 斜めに弾いても取りこぼさない。
     const gesture = classifySwipe(dx, dy);
     if (gesture !== this.last && dist >= this.cfg.THRESHOLD) {
-      return this._fire(gesture, dist, x, y, dx, dy);
+      return this._fire(gesture, dist, x, y, dx, dy, false);
     }
 
     // 同じ向きへ引き伸ばした。
@@ -175,13 +180,14 @@ export class SwipeTracker {
       const continuous = this.last === GESTURE.LEFT || this.last === GESTURE.RIGHT;
       if (continuous && this.travel >= this.reported + this.cfg.PROGRESS) {
         this.reported = this.travel;
-        return { gesture: this.last, dist: this.travel };
+        return { gesture: this.last, dist: this.travel, fresh: false };
       }
     }
     return null;
   }
 
-  _fire(gesture, dist, x, y, dx, dy) {
+  /** @param {boolean} fresh 構え直してから弾いたか（＝1回の弾きの1発目か） */
+  _fire(gesture, dist, x, y, dx, dy, fresh) {
     const len = dist || 1;
     this.lx = dx / len;
     this.ly = dy / len;
@@ -192,7 +198,7 @@ export class SwipeTracker {
     this.travel = dist;
     this.reported = dist;
     this._mark(x, y);
-    return { gesture, dist };
+    return { gesture, dist, fresh };
   }
 
   /** 折り返し検出のために直前位置を覚えておく。 */
