@@ -485,6 +485,31 @@ export class CpuController {
     return 0;
   }
 
+  /**
+   * いま押すと「判定の無い連携」に化けるボタンを落とす。
+   *
+   * 連携先が必ず攻撃とは限らない。キャヴァリアの切り抜けは、押し直すと
+   * 斬らずに後ろへ跳び退く技（後退ブースト）へ繋がる。CPU は連携を読まないので、
+   * 技の最中にもう一度攻撃を選ぶと、そのつもりが無いまま間合いを捨てることになる
+   * （実測で、振った 36 回のうち 15 回が離脱に化けて勝率が 15 ポイント落ちた）。
+   *
+   * 判定を持つ連携（剣士の 2 段斬りなど）はそのまま通す。あちらは押して得なので、
+   * 偶然でも繋がってくれた方がいい。
+   */
+  _maskHitlessChains(me, bits) {
+    if (me.state !== STATE.MOVE) return bits;
+    const move = me.currentMove();
+    if (!move || move.chains.length === 0) return bits;
+    let out = bits;
+    for (const c of move.chains) {
+      if (me.moveFrame < c.from || me.moveFrame > c.to) continue;
+      if (me.def.moves[c.move].hits.length > 0) continue;
+      if (c.button === 'attack') out &= ~BTN.ATTACK;
+      else if (c.button === 'skill') out &= ~BTN.SKILL;
+    }
+    return out;
+  }
+
   _commit(option) {
     if (option.act === this.lastAct) this.repeat += 1;
     else {
@@ -509,6 +534,13 @@ export class CpuController {
    * @param {import('./sim.js').Simulation} sim
    */
   think(sim) {
+    // 決めた入力は最後にここで濾す。連携先が判定を持たない技のときだけ
+    // ボタンを落とすので、選択そのものには手を入れなくて済む。
+    return this._maskHitlessChains(sim.fighters[this.index], this._plan(sim));
+  }
+
+  /** そのティックに出したい入力を決める（濾す前の生の判断）。 */
+  _plan(sim) {
     const me = sim.fighters[this.index];
     const foe = sim.fighters[1 - this.index];
     if (!sim.isRunning || me.isKO) return 0;

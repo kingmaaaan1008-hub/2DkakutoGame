@@ -210,6 +210,7 @@ export class Simulation {
         halfHeight: spawn.halfHeight ?? 0,
         length: spawn.length ?? 0,
         radius: spawn.radius ?? 0,
+        tint: spawn.tint ?? null,
       });
       if (spawn.shake) this.shake = Math.max(this.shake, spawn.shake);
       return;
@@ -365,6 +366,11 @@ export class Simulation {
       halfHeight: opts.halfHeight ?? 0,
       length: opts.length ?? 0,
       radius: opts.radius ?? 0,
+      /**
+       * 光の色の差し替え（'r,g,b' 形式）。省略すると演出ごとの既定色。
+       * 同じ斬撃でも、鋼の刃とビームサーベルでは色が違うので技側から指定できる。
+       */
+      tint: opts.tint ?? null,
       /** 演出の強さ。血しぶきの量などに掛かる。 */
       power: opts.power ?? 1,
       seed: this.rng.int(0, 1000),

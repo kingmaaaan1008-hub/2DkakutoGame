@@ -1,0 +1,214 @@
+{
+  "id": "cavalier",
+  "images": [
+    "cavalier-0.webp",
+    "cavalier-1.webp",
+    "cavalier-2.webp",
+    "cavalier-3.webp",
+    "cavalier-4.webp"
+  ],
+  "pages": [
+    {
+      "w": 5160,
+      "h": 1276
+    },
+    {
+      "w": 4840,
+      "h": 1490
+    },
+    {
+      "w": 4488,
+      "h": 1662
+    },
+    {
+      "w": 3992,
+      "h": 1762
+    },
+    {
+      "w": 3528,
+      "h": 1179
+    }
+  ],
+  "sourceFps": 10,
+  "scale": 0.98578,
+  "height": 208,
+  "texelsPerUnit": 2,
+  "animations": {
+    "idle": {
+      "page": 4,
+      "x": 0,
+      "y": 391,
+      "cw": 427,
+      "ch": 424,
+      "frames": 8,
+      "ax": 183.48,
+      "ay": 418.96,
+      "src": "cavalier"
+    },
+    "walk": {
+      "page": 3,
+      "x": 0,
+      "y": 0,
+      "cw": 499,
+      "ch": 426,
+      "frames": 8,
+      "ax": 210.09,
+      "ay": 420.93,
+      "src": "cavalier"
+    },
+    "move": {
+      "page": 3,
+      "x": 0,
+      "y": 927,
+      "cw": 475,
+      "ch": 432,
+      "frames": 8,
+      "ax": 228.82,
+      "ay": 491.91,
+      "src": "cavalier"
+    },
+    "attack": {
+      "page": 2,
+      "x": 0,
+      "y": 1093,
+      "cw": 503,
+      "ch": 569,
+      "frames": 8,
+      "ax": 212.07,
+      "ay": 563.87,
+      "src": "cavalier"
+    },
+    "attack2": {
+      "page": 4,
+      "x": 0,
+      "y": 815,
+      "cw": 569,
+      "ch": 364,
+      "frames": 6,
+      "ax": 234.74,
+      "ay": 447.55,
+      "src": "cavalier"
+    },
+    "attack3": {
+      "page": 0,
+      "x": 0,
+      "y": 425,
+      "cw": 616,
+      "ch": 423,
+      "frames": 8,
+      "ax": 271.21,
+      "ay": 417.97,
+      "src": "cavalier"
+    },
+    "attack4": {
+      "page": 2,
+      "x": 0,
+      "y": 537,
+      "cw": 555,
+      "ch": 556,
+      "frames": 8,
+      "ax": 233.75,
+      "ay": 542.18,
+      "src": "cavalier"
+    },
+    "attack5": {
+      "page": 3,
+      "x": 0,
+      "y": 1359,
+      "cw": 466,
+      "ch": 403,
+      "frames": 8,
+      "ax": 195.31,
+      "ay": 423.89,
+      "src": "cavalier"
+    },
+    "guard": {
+      "page": 1,
+      "x": 0,
+      "y": 0,
+      "cw": 605,
+      "ch": 544,
+      "frames": 8,
+      "ax": 252.48,
+      "ay": 538.24,
+      "src": "cavalier"
+    },
+    "hurt": {
+      "page": 3,
+      "x": 0,
+      "y": 426,
+      "cw": 484,
+      "ch": 501,
+      "frames": 8,
+      "ax": 197.28,
+      "ay": 495.85,
+      "src": "cavalier"
+    },
+    "crouch": {
+      "page": 0,
+      "x": 0,
+      "y": 848,
+      "cw": 607,
+      "ch": 428,
+      "frames": 8,
+      "ax": 267.27,
+      "ay": 418.96,
+      "src": "cavalier"
+    },
+    "jump": {
+      "page": 2,
+      "x": 0,
+      "y": 0,
+      "cw": 561,
+      "ch": 537,
+      "frames": 8,
+      "ax": 242.63,
+      "ay": 531.34,
+      "src": "cavalier"
+    },
+    "fall": {
+      "page": 1,
+      "x": 0,
+      "y": 544,
+      "cw": 575,
+      "ch": 525,
+      "frames": 8,
+      "ax": 258.4,
+      "ay": 520.49,
+      "src": "cavalier"
+    },
+    "land": {
+      "page": 1,
+      "x": 0,
+      "y": 1069,
+      "cw": 573,
+      "ch": 421,
+      "frames": 8,
+      "ax": 245.58,
+      "ay": 416.99,
+      "src": "cavalier"
+    },
+    "death": {
+      "page": 0,
+      "x": 0,
+      "y": 0,
+      "cw": 645,
+      "ch": 425,
+      "frames": 8,
+      "ax": 300.79,
+      "ay": 418.96,
+      "src": "cavalier"
+    },
+    "grabbed": {
+      "page": 4,
+      "x": 0,
+      "y": 0,
+      "cw": 441,
+      "ch": 391,
+      "frames": 8,
+      "ax": 196.42,
+      "ay": 385.44,
+      "src": "cavalier_grabbed"
+    }
+  }
+}

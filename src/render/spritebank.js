@@ -27,12 +27,17 @@ export function resolveFrame(anim, sprite) {
   const stop = anim.range ? Math.min(Math.max(anim.range[1], first), last) : last;
   const count = stop - first + 1;
 
+  // 先頭のコマを据え置く時間。0 でなければ、その間は 1 枚目のまま止まって見える
+  // （溜めの絵を見せてから振る技用）。据え置きが明けてから再生が始まる。
+  const delay = anim.delay ?? 0;
+  const time = Math.max(0, anim.time - delay);
+
   let index;
   if (anim.stretch > 0) {
-    // 技全体にアニメを引き伸ばす
-    index = Math.floor((anim.time / anim.stretch) * count);
+    // 技全体にアニメを引き伸ばす（据え置きぶんを除いた残りに収める）
+    index = Math.floor((time / Math.max(1, anim.stretch - delay)) * count);
   } else {
-    index = Math.floor((anim.time * anim.fps) / 60);
+    index = Math.floor((time * anim.fps) / 60);
   }
 
   if (anim.loop) index = ((index % count) + count) % count;
@@ -55,8 +60,14 @@ export function resolveFrame(anim, sprite) {
  * @param {number} zoom
  * @param {number} scale アニメ個別の表示倍率（素材ごとの大きさのばらつき補正）。
  *                       足元アンカーを原点に拡大するので、地面から浮くことはない。
+ * @param {{images:CanvasImageSource[], div:number}|null} layer
+ *        本体の代わりに重ねる別レイヤー（ビームの発光層など）。
+ *        置き場所と大きさは本体とまったく同じで、**読み出す画像だけ**が変わる。
+ *        レイヤーは 1/div に縮めてあるので、切り出し位置もそのぶん割る。
  */
-export function drawFighterSprite(ctx, sprite, anim, screenX, screenY, facing, zoom, scale = 1) {
+export function drawFighterSprite(
+  ctx, sprite, anim, screenX, screenY, facing, zoom, scale = 1, layer = null
+) {
   const resolved = resolveFrame(anim, sprite);
   if (!resolved) return;
   const { cell, index } = resolved;
@@ -64,15 +75,17 @@ export function drawFighterSprite(ctx, sprite, anim, screenX, screenY, facing, z
   // アトラスは 1 ワールド単位あたり texelsPerUnit テクセルで焼いてある。
   // 表示倍率はそのぶん割り戻す（見た目の大きさは焼き方に依存しない）。
   const z = (zoom * scale) / (sprite.texelsPerUnit || 1);
+  const img = layer ? layer.images[cell.page] : sprite.images[cell.page];
+  const div = layer ? layer.div : 1;
   ctx.save();
   ctx.translate(screenX, screenY);
   ctx.scale(facing < 0 ? -z : z, z);
   ctx.drawImage(
-    sprite.images[cell.page],
-    cell.x + index * cell.cw,
-    cell.y,
-    cell.cw,
-    cell.ch,
+    img,
+    (cell.x + index * cell.cw) / div,
+    cell.y / div,
+    cell.cw / div,
+    cell.ch / div,
     -cell.ax,
     -cell.ay,
     cell.cw,

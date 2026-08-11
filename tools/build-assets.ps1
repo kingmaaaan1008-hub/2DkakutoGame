@@ -65,6 +65,15 @@ $GROUNDRATIO = 0.12  # a row counts as "the character" at 12% of the busiest row
 #                these, each frame is shifted so its own silhouette lands on the
 #                sheet anchor, which pins the body in place and leaves only the
 #                intended motion (wings, limbs).
+# stabilizeY   : the same, vertically. A flight clip filmed while the character
+#                climbs rises frame by frame, so a looping animation bounces back
+#                down every time it wraps.
+#                The target differs from stabilizeX on purpose. Horizontally every
+#                animation should share one stance, so frames are pulled onto the
+#                sheet anchor. Vertically the right height is per animation (a
+#                hovering pose belongs above a standing one), so frames are pulled
+#                onto *that animation's own mean* instead: the drift goes away and
+#                the height it was drawn at stays.
 $CONFIG = @(
   @{
     id = 'swordsman'; targetHeight = 215; anchorMetric = 'body'
@@ -114,6 +123,20 @@ $CONFIG = @(
       @{ file = 'succubus';        ref = 'idle';   dx = 0; dy = 0; stabilizeX = @('move') },
       @{ file = 'succubus_attack'; ref = 'claw1';  dx = 0; dy = 0 },
       @{ file = 'succubus_crouch'; ref = 'crouch'; dx = 0; dy = 0 }
+    )
+  },
+  @{
+    # The cavalier. Everything except 'grabbed' rides on one sheet, including the
+    # five attack rows the moves are cut from. 'move' is her thruster flight loop,
+    # filmed while she crosses the frame, so it is stabilised like the succubus's.
+    id = 'cavalier'; targetHeight = 208; anchorMetric = 'body'
+    sheets = @(
+      # 'move' はスラスターで滑る飛行ループ。撮っている間にキャラが画面を横切り、
+      # なおかつ上へ昇っていくので、横も縦も止める必要がある
+      # （縦を止めないと、ループが頭に戻るたびに 29 単位ぴょこんと落ちる）。
+      @{ file = 'cavalier';         ref = 'idle';    dx = 0; dy = 0
+         stabilizeX = @('move'); stabilizeY = @('move') },
+      @{ file = 'cavalier_grabbed'; ref = 'grabbed'; dx = 0; dy = 0 }
     )
   },
   @{
@@ -206,35 +229,58 @@ foreach ($cfg in $CONFIG) {
         }
       }
 
+      # per-frame vertical correction. Pulled onto this animation's own mean,
+      # so the height it was drawn at survives and only the drift is removed.
+      $shiftY = @()
+      if ($L.cfg.stabilizeY -and ($L.cfg.stabilizeY -contains $name)) {
+        $mys = @()
+        foreach ($rc in $anim.frameRects) {
+          $mys += ($L.sheet.MedianY($rc.x, $rc.y, $rc.w, $rc.h, $THR) - $rc.y)
+        }
+        $midY = ($mys | Measure-Object -Average).Average
+        foreach ($my in $mys) { $shiftY += [int][math]::Round($my - $midY) }
+        Write-Host ("  stabilizeY {0,-10} drift={1}px" -f $name,
+          (($mys | Measure-Object -Maximum).Maximum - ($mys | Measure-Object -Minimum).Minimum))
+      } else {
+        foreach ($rc in $anim.frameRects) { $shiftY += 0 }
+      }
+
       # union of the frame boxes, measured after the correction
       $minX = [int]::MaxValue; $minY = [int]::MaxValue; $maxX = -1; $maxY = -1
       for ($i = 0; $i -lt $anim.frameRects.Count; $i++) {
         $b = Get-FrameBBox $L.sheet $anim.frameRects[$i]
         if (-not $b) { continue }
         $bx = $b.x - $shift[$i]
+        $by = $b.y - $shiftY[$i]
         if ($bx -lt $minX) { $minX = $bx }
-        if ($b.y -lt $minY) { $minY = $b.y }
+        if ($by -lt $minY) { $minY = $by }
         if (($bx + $b.w) -gt $maxX) { $maxX = $bx + $b.w }
-        if (($b.y + $b.h) -gt $maxY) { $maxY = $b.y + $b.h }
+        if (($by + $b.h) -gt $maxY) { $maxY = $by + $b.h }
       }
 
       # The crop is read at ux + shift, so it has to stay inside the frame for
       # every frame; otherwise a shifted read would pull in the neighbouring one.
       $sMin = ($shift | Measure-Object -Minimum).Minimum
       $sMax = ($shift | Measure-Object -Maximum).Maximum
+      $sMinY = ($shiftY | Measure-Object -Minimum).Minimum
+      $sMaxY = ($shiftY | Measure-Object -Maximum).Maximum
       $loX = [math]::Max(0, -$sMin)
       $hiX = $fw - [math]::Max(0, $sMax)
+      $loY = [math]::Max(0, -$sMinY)
+      $hiY = $fh - [math]::Max(0, $sMaxY)
       $ux = [math]::Max($loX, $minX - $pad)
-      $uy = [math]::Max(0, $minY - $pad)
+      $uy = [math]::Max($loY, $minY - $pad)
       $uw = [math]::Min($hiX, $maxX + $pad) - $ux
-      $uh = [math]::Min($fh, $maxY + $pad) - $uy
+      $uh = [math]::Min($hiY, $maxY + $pad) - $uy
       if ($uw -le 0) { throw "$($cfg.id)/${name}: stabilizeX の補正が大きすぎてコマに収まらない" }
+      if ($uh -le 0) { throw "$($cfg.id)/${name}: stabilizeY の補正が大きすぎてコマに収まらない" }
 
       $rows += @{
         name   = $name
         L      = $L
         anim   = $anim
         shift  = $shift
+        shiftY = $shiftY
         ux     = $ux; uy = $uy; uw = $uw; uh = $uh
         cw     = [int][math]::Ceiling($uw * $scale)
         ch     = [int][math]::Ceiling($uh * $scale)
@@ -285,7 +331,7 @@ foreach ($cfg in $CONFIG) {
       for ($i = 0; $i -lt $r.frames; $i++) {
         $rc = $r.anim.frameRects[$i]
         $canvas.Blit($r.L.sheet,
-          ($rc.x + $r.ux + $r.shift[$i]), ($rc.y + $r.uy), $r.uw, $r.uh,
+          ($rc.x + $r.ux + $r.shift[$i]), ($rc.y + $r.uy + $r.shiftY[$i]), $r.uw, $r.uh,
           ($r.x + $i * $r.cw), $r.y, $r.cw, $r.ch)
       }
     }

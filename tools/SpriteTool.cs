@@ -115,6 +115,35 @@ namespace KakutoTools
             return lo + col.Length - 1;
         }
 
+        // Alpha-weighted median row. The vertical twin of MedianX.
+        // Used to pin a travelling loop: a flight clip filmed while the character
+        // climbs drifts upward frame by frame, which shows up in game as a bounce
+        // every time the loop wraps back to the first frame.
+        public double MedianY(int x0, int y0, int w, int h, int thr)
+        {
+            int x1 = Math.Min(x0 + w, Width), y1 = Math.Min(y0 + h, Height);
+            int lo = Math.Max(0, y0);
+            var row = new double[Math.Max(0, y1 - lo)];
+            double total = 0;
+            for (int y = lo; y < y1; y++)
+            {
+                int off = y * Width * 4;
+                for (int x = Math.Max(0, x0); x < x1; x++)
+                {
+                    int a = _bgra[off + x * 4 + 3];
+                    if (a > thr) { row[y - lo] += a; total += a; }
+                }
+            }
+            if (total <= 0) return -1;
+            double half = total / 2, acc = 0;
+            for (int i = 0; i < row.Length; i++)
+            {
+                acc += row[i];
+                if (acc >= half) return lo + i;
+            }
+            return lo + row.Length - 1;
+        }
+
         // Opaque pixel count per row. Useful to find the feet / ground line.
         public int[] RowCounts(int x0, int y0, int w, int h, int thr)
         {

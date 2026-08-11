@@ -142,6 +142,7 @@ export class Fighter {
       reverse: false,
       stretch: 0,
       range: null,
+      delay: 0,
     };
   }
 
@@ -236,6 +237,18 @@ export class Fighter {
   // ── アニメーション ──────────────────────────────────────────
 
   /**
+   * そのアニメを繰り返すか。
+   *
+   * 待機・歩き・ダッシュのような「続いている状態」の絵は普通ループさせるが、
+   * 素材によっては閉じたループになっていないことがある（撮っている間に
+   * キャラが動いてしまう飛行クリップなど）。そういうアニメは
+   * キャラ定義の `animOnce` に載せておくと、**最後のコマで止まる**。
+   */
+  _loops(name) {
+    return !this.def.animOnce?.[name];
+  }
+
+  /**
    * 表示アニメを切り替える。同じアニメを指定した場合は再生位置を保つ
    * （歩き continuation など、切り替えのたびに先頭へ戻らないように）。
    */
@@ -251,6 +264,8 @@ export class Fighter {
       stretch: opts.stretch ?? 0,
       /** [開始,終了] を指定すると、そのコマ範囲だけを使う。null なら全コマ。 */
       range: opts.range ?? null,
+      /** 先頭のコマを据え置くティック数。明けてから再生が始まる。 */
+      delay: opts.delay ?? 0,
     };
     // 名前が同じでも、引き伸ばし方やコマ範囲が違えば別のアニメとして作り直す
     const sameRange =
@@ -259,7 +274,13 @@ export class Fighter {
         next.range != null &&
         this.anim.range[0] === next.range[0] &&
         this.anim.range[1] === next.range[1]);
-    if (this.anim.name === name && this.anim.stretch === next.stretch && sameRange && !opts.restart) {
+    if (
+      this.anim.name === name &&
+      this.anim.stretch === next.stretch &&
+      this.anim.delay === next.delay &&
+      sameRange &&
+      !opts.restart
+    ) {
       // 逆再生フラグだけは毎フレーム変わりうる（後退歩き）
       this.anim.reverse = next.reverse;
       this.anim.fps = next.fps;
@@ -349,6 +370,10 @@ export class Fighter {
       stretch: move.animFps ? 0 : move.total,
       range: move.animRange,
       reverse: move.animReverse,
+      // 先頭のコマを据え置いてから振る技（据え置き 0 なら普通に頭から流れる）
+      delay: move.animDelay,
+      // 既定は最後のコマで止める。閉じたループのシートだけ回し続ける
+      loop: move.animLoop,
       hold: true,
       restart: true,
     });
@@ -406,7 +431,7 @@ export class Fighter {
       this.hoverTicks = flight.ticks;
       this.vy = 0;
       this.vx = dir * flight.speed;
-      this.setAnim(this.def.anims.fly, { fps: 12, loop: true });
+      this.setAnim(this.def.anims.fly, { fps: 12, loop: this._loops(this.def.anims.fly) });
       sim?.addEffect('pop', this.x, this.y + 20, { life: 12 });
       return;
     }
@@ -532,7 +557,7 @@ export class Fighter {
       // ダッシュ中は進んでいる方を向く
       this.facing = this.dashDir;
       this.vx = this.dashDir * this.def.dashSpeed;
-      this.setAnim(this.def.anims.dash, { fps: 15, loop: true });
+      this.setAnim(this.def.anims.dash, { fps: 15, loop: this._loops(this.def.anims.dash) });
       // 方向を離す / 逆を入れると走りを止める
       if (dir !== this.dashDir) {
         this._toIdle();
@@ -545,11 +570,15 @@ export class Fighter {
       this.walkDir = dir;
       this.vx = dir * this.def.walkSpeed;
       // 後ろに下がるときは歩きシートを逆再生する
-      this.setAnim(this.def.anims.walk, { fps: 12, loop: true, reverse: dir !== this.facing });
+      this.setAnim(this.def.anims.walk, {
+        fps: 12,
+        loop: this._loops(this.def.anims.walk),
+        reverse: dir !== this.facing,
+      });
     } else {
       this.state = STATE.IDLE;
       this.vx = 0;
-      this.setAnim(this.def.anims.idle, { fps: 9, loop: true });
+      this.setAnim(this.def.anims.idle, { fps: 9, loop: this._loops(this.def.anims.idle) });
     }
   }
 
@@ -641,7 +670,7 @@ export class Fighter {
       this.hoverTicks -= 1;
       this.vy = 0;
       this.vx = dir * this.def.flight.speed;
-      this.setAnim(this.def.anims.fly, { fps: 12, loop: true });
+      this.setAnim(this.def.anims.fly, { fps: 12, loop: this._loops(this.def.anims.fly) });
       return;
     }
 
@@ -666,7 +695,7 @@ export class Fighter {
     this.facing = -opponent.facing;
     this.x = opponent.x + opponent.facing * hold.x;
     this.y = hold.y;
-    this.setAnim(this.def.anims.grabbed, { fps: 9, loop: true });
+    this.setAnim(this.def.anims.grabbed, { fps: 9, loop: this._loops(this.def.anims.grabbed) });
   }
 
   /**
@@ -965,7 +994,11 @@ export class Fighter {
     this.vy = 0;
     // 掴まれた側は掴んだ相手の方を向かされる
     this.facing = -grabber.facing;
-    this.setAnim(this.def.anims.grabbed, { fps: 9, loop: true, restart: true });
+    this.setAnim(this.def.anims.grabbed, {
+      fps: 9,
+      loop: this._loops(this.def.anims.grabbed),
+      restart: true,
+    });
 
     grabber.comboCount += 1;
     grabber.comboDisplay = grabber.comboCount;
@@ -1016,7 +1049,7 @@ export class Fighter {
       this.comboCount, this.comboDisplay, this.comboDisplayTimer,
       this.stunTicks ?? 0,
       this.anim.name, this.anim.time, this.anim.fps, this.anim.loop,
-      this.anim.hold, this.anim.reverse, this.anim.stretch,
+      this.anim.hold, this.anim.reverse, this.anim.stretch, this.anim.delay,
       this.anim.range ? this.anim.range.slice() : null,
     ];
   }
@@ -1038,7 +1071,7 @@ export class Fighter {
     this.stunTicks = s[i++];
     this.anim = {
       name: s[i++], time: s[i++], fps: s[i++], loop: s[i++],
-      hold: s[i++], reverse: s[i++], stretch: s[i++], range: null,
+      hold: s[i++], reverse: s[i++], stretch: s[i++], delay: s[i++], range: null,
     };
     const range = s[i++];
     this.anim.range = range ? range.slice() : null;

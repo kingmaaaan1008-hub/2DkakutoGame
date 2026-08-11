@@ -5,10 +5,14 @@
  * （描画がゲーム進行に影響しないので、フレームを落としても試合結果は変わらない）
  */
 import { STAGE_WIDTH, STATE } from '../game/constants.js';
+import { PHASE } from '../game/sim.js';
+import { CHARACTERS } from '../game/characters/index.js';
 import { toWorldBox } from '../game/moves.js';
 import { getProjectileDef } from '../game/projectiles.js';
 import { drawFighterSprite, drawStillFrame } from './spritebank.js';
 import { drawStage } from './stage.js';
+import { SparkleField } from './sparkles.js';
+import { buildBeamGlow } from './beamglow.js';
 
 /** '#rrggbb' を 'r,g,b' にする。rgba() の中で透明度だけ差し替えたいときに使う。 */
 function hexToRgb(hex) {
@@ -87,6 +91,22 @@ export class Renderer {
      * （エフェクトが消えれば WeakMap から自然に落ちる）。
      */
     this._bloodCache = new WeakMap();
+    /**
+     * スラスターの粒。キャラ定義に `thruster` があるキャラだけが撒く。
+     * 描画側だけの持ち物で、シミュレーションには載せていない（sparkles.js 参照）。
+     */
+    this.sparkles = new SparkleField();
+    /**
+     * ビームの発光レイヤー（キャラ定義に `beamGlow` があるキャラだけ）。
+     *
+     * アトラスから焼くのに 40ms ほど掛かるので、**読み込みが済んだこの時点で**
+     * 作っておく。最初に描くときに焼くと、ラウンドの頭で 1 フレーム落ちる。
+     */
+    this._beamGlow = new Map();
+    for (const [id, sprite] of Object.entries(sprites)) {
+      const bg = CHARACTERS[id]?.beamGlow;
+      if (bg) this._beamGlow.set(sprite, buildBeamGlow(sprite, bg));
+    }
     this.cam = { x: STAGE_WIDTH / 2, zoom: 1, groundY: 0, canvasW: 0, canvasH: 0 };
   }
 
@@ -159,10 +179,17 @@ export class Renderer {
 
     drawStage(ctx, cam, w, h);
 
-    // 影 → 地面の演出 → キャラ → 弾 → その他の演出 の順で重ねる。
+    // スラスターの粒。ラウンドの頭で撒き直す（前のラウンドの残りを持ち越さない）
+    if (sim.phase === PHASE.INTRO) this.sparkles.clear();
+    for (const f of sim.fighters) this.sparkles.emit(f);
+    this.sparkles.step();
+
+    // 影 → 地面の演出 → 粒 → キャラ → 弾 → その他の演出 の順で重ねる。
     // 魔法陣は足元に敷くものなので、キャラより先に描いて下に潜らせる。
     for (const f of sim.fighters) this._drawShadow(f);
     for (const fx of sim.effects) if (GROUND_EFFECTS.has(fx.type)) this._drawEffect(fx, sim);
+    // 排気の粒はキャラより先。後ろへ流れるものなので、体に隠れる側が正しい
+    this.sparkles.draw(ctx, cam, false);
     // 低い方から重ねる。ただし掴まれている側は必ず最後に（＝手前に）描く。
     // 吸血は相手に顔を埋めて吸う画なので、掴んだ淫魔の顔は相手の陰に
     // 入るのが正しい。掴まれた相手は宙に浮くため y 順でもたいてい手前に
@@ -171,6 +198,9 @@ export class Renderer {
       .slice()
       .sort((p, q) => (p.isGrabbed ? 1 : 0) - (q.isGrabbed ? 1 : 0) || p.y - q.y);
     for (const f of order) this._drawFighter(f);
+    // 常時漏れる粒はキャラより後。噴射口が翼の分岐点にあるので、
+    // 奥に描くと翼の陰に入って一粒も見えない
+    this.sparkles.draw(ctx, cam, true);
     for (const p of sim.projectiles) this._drawProjectile(p, sim);
     for (const fx of sim.effects) if (!GROUND_EFFECTS.has(fx.type)) this._drawEffect(fx, sim);
 
@@ -203,23 +233,40 @@ export class Renderer {
 
     // 被弾直後は白く光らせる
     const flashing = f.hitstop > 0 && (f.state === STATE.HIT || f.state === STATE.GUARD_BREAK);
-    if (flashing) ctx.filter = 'brightness(1.9) saturate(0.4)';
 
     // animFlip に載っているアニメだけ左右を裏返す（素材が逆向きに描かれている場合）
     const facing = f.def.animFlip?.[f.anim.name] ? -f.facing : f.facing;
 
-    drawFighterSprite(
-      ctx,
-      sprite,
-      f.anim,
-      cam.toScreenX(f.x),
-      cam.toScreenY(f.y),
-      facing,
-      cam.zoom,
-      f.def.animScale?.[f.anim.name] ?? 1
-    );
+    const sx = cam.toScreenX(f.x);
+    const sy = cam.toScreenY(f.y);
+    const scale = f.def.animScale?.[f.anim.name] ?? 1;
+    // ビームの発光層。本体と同じ位置・同じ大きさで、読み出す画像だけが違う（beamglow.js）
+    const bg = f.def.beamGlow;
+    const layer = bg && this._beamGlow.get(sprite);
 
+    // 刃の裏当て。**本体より先に**描くのが肝で、素材の刃には半透明のコマが
+    // あるので（実測で下位 1/4 が alpha 152）、先に不透明な光を敷いておかないと
+    // 透けた先に背景が出る。加算合成では背景を隠せないので、ここは source-over。
+    // 敷くほうがぼけていても、上に本物の刃が乗るので輪郭は本体が決める
+    if (layer && bg.backing > 0) {
+      ctx.save();
+      ctx.globalAlpha = bg.backing;
+      drawFighterSprite(ctx, sprite, f.anim, sx, sy, facing, cam.zoom, scale, layer);
+      ctx.restore();
+    }
+
+    if (flashing) ctx.filter = 'brightness(1.9) saturate(0.4)';
+    drawFighterSprite(ctx, sprite, f.anim, sx, sy, facing, cam.zoom, scale);
     if (flashing) ctx.filter = 'none';
+
+    // 仕上げの加算。**添えるだけ**。ここを強くすると刃が白飛びして色が飛ぶ
+    if (layer && bg.alpha > 0) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = bg.alpha;
+      drawFighterSprite(ctx, sprite, f.anim, sx, sy, facing, cam.zoom, scale, layer);
+      ctx.restore();
+    }
 
     // キャラ定義に guardWall があれば、ガード中だけ前に張る
     if (f.def.guardWall && (f.state === STATE.GUARD || f.state === STATE.BLOCK)) {
@@ -540,8 +587,10 @@ export class Renderer {
     ctx.translate(x, y);
     ctx.scale(fx.facing, 1);
 
-    // 弧そのもの。太い光の帯の上に細い芯を重ねる
-    for (const [w, col] of [[9, 'rgba(130, 190, 255, 0.5)'], [3.5, 'rgba(255, 255, 255, 0.95)']]) {
+    // 弧そのもの。太い光の帯の上に細い芯を重ねる。
+    // 帯の色は技データの tint で差し替えられる（ビームサーベルは水色）
+    const glow = fx.tint ?? '130, 190, 255';
+    for (const [w, col] of [[9, `rgba(${glow}, 0.5)`], [3.5, 'rgba(255, 255, 255, 0.95)']]) {
       ctx.beginPath();
       ctx.lineWidth = w * cam.zoom;
       ctx.lineCap = 'round';

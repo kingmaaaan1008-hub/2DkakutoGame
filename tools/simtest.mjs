@@ -1196,12 +1196,500 @@ section('淫魔の吸血');
   }
 }
 
+// ── キャヴァリア ────────────────────────────────────────────
+// 「攻撃そのものが踏み込み」「空中は高度を保って横へ抜ける」という
+// このキャラの前提が崩れていないかを見る。
+section('キャヴァリアの切り抜け');
+{
+  const sim = newSim(['cavalier', 'swordsman']);
+  place(sim, 600, 1400);
+  const p1 = sim.fighters[0];
+  const x0 = p1.x;
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 1, 0);
+  check('攻撃で切り抜けが出る', p1.moveId === 'boostSlash', `move=${p1.moveId}`);
+  run(sim, 40, 0);
+  check('振るとそのまま踏み込む', p1.x - x0 > 120, `travel=${(p1.x - x0).toFixed(0)}`);
+  check('地上で出しても浮かない', p1.y === 0, `y=${p1.y}`);
+}
+
+{
+  // 踏み込みぶん、判定リーチ(156)より遠くから届く
+  const sim = newSim(['cavalier', 'swordsman']);
+  place(sim, 820, 1080);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.ATTACK);
+  for (let i = 0; i < 40 && !p2.doomed; i += 1) run(sim, 1, 0);
+  check('離れていても切り抜けが届く', p2.doomed, `state=${p2.state}`);
+}
+
+{
+  // 切り抜けは打撃。スキルと違ってガードは通る
+  const sim = newSim(['cavalier', 'swordsman']);
+  place(sim, 820, 980);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.ATTACK, BTN.GUARD);
+  run(sim, 40, 0, BTN.GUARD);
+  check('切り抜けはガードできる', !p2.doomed, `state=${p2.state}`);
+}
+
+{
+  // 2 段目は斬らずに後ろへ跳び退く。攻撃判定は持たない。
+  // 連打で入力しても 1 段目の判定が切れないこと（受付は判定が終わってから開く）も見る。
+  const sim = newSim(['cavalier', 'swordsman']);
+  place(sim, 500, 1500);
+  const p1 = sim.fighters[0];
+  const seen = [];
+  const track = [];
+  let stage2Hits = 0;
+  for (let i = 0; i < 120; i += 1) {
+    // 連打（5 ティックごと）。人が押すより速いので、早すぎる連携の検出になる
+    run(sim, 1, i % 5 === 0 ? BTN.ATTACK : 0);
+    if (p1.moveId && seen.at(-1) !== p1.moveId) seen.push(p1.moveId);
+    if (p1.moveId === 'backBoost') stage2Hits += p1.activeHits().length;
+    track.push({ move: p1.moveId, x: p1.x, y: p1.y });
+  }
+  check('攻撃の押し直しで後退ブーストへ繋がる',
+    seen.slice(0, 2).join('>') === 'boostSlash>backBoost', seen.join('>'));
+
+  const span = (id) => {
+    const f = track.filter((t) => t.move === id);
+    return { dx: f.at(-1).x - f[0].x, dy: f.at(-1).y - f[0].y };
+  };
+  check('1段目は前へ出る', span('boostSlash').dx > 60, `dx=${span('boostSlash').dx.toFixed(0)}`);
+  check('2段目は後ろへ抜ける', span('backBoost').dx < -60, `dx=${span('backBoost').dx.toFixed(0)}`);
+  check('2段目に攻撃判定は無い', stage2Hits === 0, `hits=${stage2Hits}`);
+  check('2段目はジャンプの絵を使う',
+    getCharacter('cavalier').moves.backBoost.anim === getCharacter('cavalier').anims.jump,
+    getCharacter('cavalier').moves.backBoost.anim);
+}
+
+{
+  // 2 段目は斜め上へ跳ぶので、跳んでから落ちるまでが 1 セット。
+  // 跳び上がったところで技が終わると、そこからまた攻撃 → 後退で上がれてしまう。
+  const sim = newSim(['cavalier', 'swordsman']);
+  place(sim, 500, 1500);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.ATTACK);
+  while (p1.moveFrame < 24) run(sim, 1, 0);
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 1, 0);
+  let peak = 0;
+  while (p1.moveId === 'backBoost') {
+    peak = Math.max(peak, p1.y);
+    run(sim, 1, 0);
+  }
+  check('2段目は斜め上へ跳ぶ', peak > 60, `peak=${peak.toFixed(0)}`);
+  check('2段目は落ち切ってから終わる', p1.y === 0, `y=${p1.y.toFixed(1)}`);
+}
+
+{
+  // 刻み 4 発 → 締めの 1 発。締めは斬り抜けた勢いで相手を浮かせる
+  const sim = newSim(['cavalier', 'swordsman']);
+  place(sim, 800, 980);
+  const [p1, p2] = sim.fighters;
+  run(sim, 1, BTN.ATTACK);
+  let peak = 0;
+  // 刻みごとにヒットストップが挟まるので、実時間では総フレームより長くかかる
+  for (let i = 0; i < 80; i += 1) {
+    run(sim, 1, 0);
+    peak = Math.max(peak, p2.y);
+  }
+  check('切り抜けは多段ヒットする', p1.comboDisplay === 5, `hits=${p1.comboDisplay}`);
+  check('締めで相手を打ち上げる', peak > 40, `peak=${peak.toFixed(0)}`);
+}
+
+{
+  // 空中スキルも多段。回っている刃で削ってから弾き飛ばす
+  const sim = newSim(['cavalier', 'swordsman']);
+  place(sim, 650, 770);
+  const [p1, p2] = sim.fighters;
+  run(sim, 1, BTN.UP);
+  run(sim, 1, 0);
+  run(sim, 1, BTN.SKILL);
+  for (let i = 0; i < 120; i += 1) run(sim, 1, 0, BTN.GUARD);
+  check('錐揉み突進は多段ヒットする', p1.comboDisplay === 6, `hits=${p1.comboDisplay}`);
+  check('締めでダウンを奪う', p2.isKO, `state=${p2.state}`);
+}
+
+{
+  // 掴みも締めが多段。掴んだ 1 回とあわせて 5 ヒットになる
+  const sim = newSim(['cavalier', 'swordsman']);
+  place(sim, 800, 940);
+  const [p1, p2] = sim.fighters;
+  run(sim, 1, BTN.SKILL, BTN.GUARD);
+  for (let i = 0; i < 240 && !p2.isKO; i += 1) run(sim, 1, 0, BTN.GUARD);
+  check('串刺しは締めが多段ヒットする', p1.comboDisplay === 5, `hits=${p1.comboDisplay}`);
+}
+
+{
+  // 通常攻撃 2 段目からスキルで空中スキルへ繋がる。
+  // 跳び退いた高さがそのまま突進の高さになる。
+  const sim = newSim(['cavalier', 'swordsman']);
+  place(sim, 500, 1500);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.ATTACK);
+  while (p1.moveFrame < 28) run(sim, 1, 0);
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 1, 0);
+  check('2段目が出ている', p1.moveId === 'backBoost', `move=${p1.moveId}`);
+  run(sim, 12, 0);
+  run(sim, 1, BTN.SKILL);
+  run(sim, 1, 0);
+  check('2段目からスキルで錐揉み突進へ繋がる', p1.moveId === 'drillDash', `move=${p1.moveId}`);
+  check('跳び退いた高さのまま突進に入る', p1.y > 40, `y=${p1.y.toFixed(0)}`);
+}
+
+{
+  // 1 段目の絵は「構えたまま踏み込んで、判定が切れるあたりで振り抜く」。
+  // animDelay がゼロに戻ると、突っ込む前に振り終わってしまう。
+  const { resolveFrame } = await import('../src/render/spritebank.js');
+  const { readFileSync: readSheet } = await import('node:fs');
+  const sheet = JSON.parse(
+    readSheet(new URL('../assets/characters/cavalier.json', import.meta.url), 'utf8'));
+
+  const sim = newSim(['cavalier', 'swordsman']);
+  place(sim, 500, 1500);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.ATTACK);
+  const frames = [];
+  for (let i = 0; i < 34; i += 1) {
+    frames.push(resolveFrame(p1.anim, sheet).index);
+    run(sim, 1, 0);
+  }
+  const hit = getCharacter('cavalier').moves.boostSlash.hits[0];
+  check('判定が出ている間は1枚目のまま',
+    frames.slice(0, hit.end).every((f) => f === frames[0]),
+    frames.join(''));
+  check('判定が切れたら残りのコマが流れる', frames.at(-1) > frames[0] + 4, frames.join(''));
+}
+
+{
+  // 2 段目は斜め上へ抜けるので、空中で連打すると上がり続けかねない。
+  // 跳んだぶんを落ち切らせる長さにして、1 巡すると必ず落ちるようにしてある。
+  // 2 段目からスキルで突進へ繋がるので、両方のボタンを混ぜて叩く。
+  const sim = newSim(['cavalier', 'swordsman']);
+  place(sim, 400, 1700);
+  const p1 = sim.fighters[0];
+  let maxY = 0;
+  let landed = 0;
+  for (let i = 0; i < 600; i += 1) {
+    run(sim, 1, (i % 5 === 0 ? BTN.ATTACK : 0) | (i % 7 === 0 ? BTN.SKILL : 0));
+    maxY = Math.max(maxY, p1.y);
+    if (p1.y === 0) landed += 1;
+  }
+  check('空中で連打しても上がり続けない', maxY < 400 && landed > 0,
+    `maxY=${maxY.toFixed(0)} landed=${landed}`);
+}
+
+{
+  // 空中攻撃は地上とまったく同じ技を指している
+  const def = getCharacter('cavalier');
+  check('空中攻撃は地上と同じ技', def.airAttackMove === def.attackMove,
+    `${def.attackMove} / ${def.airAttackMove}`);
+
+  // 上昇中に出しても、その場で高度が止まって横へ抜ける
+  const sim = newSim(['cavalier', 'swordsman']);
+  place(sim, 600, 1400);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 6, 0);
+  run(sim, 1, BTN.ATTACK);
+  check('空中でも切り抜けが出る', p1.moveId === 'boostSlash', `move=${p1.moveId}`);
+  const y0 = p1.y;
+  const x0 = p1.x;
+  let drift = 0;
+  for (let i = 0; i < 20; i += 1) {
+    run(sim, 1, 0);
+    drift = Math.max(drift, Math.abs(p1.y - y0));
+  }
+  check('空中では高度を保ったまま抜ける', drift < 2 && p1.x - x0 > 90,
+    `drift=${drift.toFixed(1)} dx=${(p1.x - x0).toFixed(0)}`);
+}
+
+section('キャヴァリアの串刺し');
+{
+  const sim = newSim(['cavalier', 'swordsman']);
+  place(sim, 800, 940);
+  const [p1, p2] = sim.fighters;
+  run(sim, 1, BTN.SKILL, BTN.GUARD);
+  for (let i = 0; i < 40 && !p2.isGrabbed; i += 1) run(sim, 1, 0, BTN.GUARD);
+  check('ガードごと貫いて掴む', p2.isGrabbed, `state=${p2.state}`);
+
+  // 掴んだ瞬間はヒットストップで両者止まっている。位置が決まるのはそのあと
+  run(sim, 10, 0, BTN.GUARD);
+  const hold = getCharacter('cavalier').moves.pierceHold.grabHold;
+  check('刃の先に吊るされる', Math.abs(p2.x - (p1.x + p1.facing * hold.x)) < 0.01,
+    `dx=${(p2.x - p1.x).toFixed(1)} hold=${hold.x}`);
+  check('地面から持ち上がる', p2.y === hold.y, `y=${p2.y}`);
+
+  for (let i = 0; i < 200 && !p2.isKO; i += 1) run(sim, 1, 0, BTN.GUARD);
+  check('刃から蹴り飛ばして倒し切る', p2.isKO, `state=${p2.state}`);
+}
+
+{
+  // 掴みなので跳ばれると当たらない（淫魔の吸血と同じ択）
+  const sim = newSim(['cavalier', 'swordsman']);
+  place(sim, 800, 940);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.SKILL, BTN.UP);
+  run(sim, 40, 0, 0);
+  check('串刺しは跳んで避けられる', !p2.isGrabbed && !p2.doomed, `state=${p2.state}`);
+}
+
+section('キャヴァリアの錐揉み突進');
+{
+  const sim = newSim(['cavalier', 'swordsman']);
+  place(sim, 400, 1600);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 10, 0);
+  run(sim, 1, BTN.SKILL);
+  check('空中スキルで突進が出る', p1.moveId === 'drillDash', `move=${p1.moveId}`);
+
+  const x0 = p1.x;
+  const y0 = p1.y;
+  run(sim, 30, 0);
+  const dx = p1.x - x0;
+  const dy = y0 - p1.y;
+  check('横に長く突っ込む', dx > 200, `dx=${dx.toFixed(0)}`);
+  // 沈むには沈むが、進む距離に対しては水平と言える範囲に収める
+  check('沈み方は水平に見える範囲', dy > 0 && dy < dx * 0.4, `dx=${dx.toFixed(0)} dy=${dy.toFixed(0)}`);
+}
+
+{
+  // 錐揉みは 6 コマで 1 回転する閉じたループ。技の全体フレームより速く回すため、
+  // animLoop で繰り返している。ここが false に戻ると、回り切ったあと最後のコマで
+  // 固まったまま飛ぶ（絵は出ているのでシミュレーションのテストでは気づけない）。
+  const { resolveFrame } = await import('../src/render/spritebank.js');
+  const { readFileSync: readSheet } = await import('node:fs');
+  const sheet = JSON.parse(
+    readSheet(new URL('../assets/characters/cavalier.json', import.meta.url), 'utf8'));
+
+  const sim = newSim(['cavalier', 'swordsman']);
+  place(sim, 400, 1600);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 10, 0);
+  run(sim, 1, BTN.SKILL);
+  let turns = 0;
+  let prev = resolveFrame(p1.anim, sheet).index;
+  for (let i = 0; i < 36; i += 1) {
+    run(sim, 1, 0);
+    const f = resolveFrame(p1.anim, sheet).index;
+    // コマ番号が戻ったら 1 回転ぶん回り切ったということ
+    if (f < prev) turns += 1;
+    prev = f;
+  }
+  check('錐揉みは突進中に何回も回る', turns >= 2, `turns=${turns}`);
+  check('錐揉みは繰り返し再生になっている', getCharacter('cavalier').moves.drillDash.animLoop === true);
+}
+
+{
+  // 体が胸の高さに浮いている姿勢なので、沈まないと相手の頭上を通ってしまう。
+  // ジャンプのどの高さから出しても当たることを確かめる。
+  for (const wait of [1, 8, 16]) {
+    const sim = newSim(['cavalier', 'swordsman']);
+    place(sim, 650, 1000);
+    const [p1, p2] = sim.fighters;
+    run(sim, 1, BTN.UP);
+    run(sim, wait, 0);
+    const alt = p1.y;
+    run(sim, 1, BTN.SKILL);
+    for (let i = 0; i < 60 && !p2.doomed; i += 1) run(sim, 1, 0, BTN.GUARD);
+    check(`高度${alt.toFixed(0)}から出しても当たる`, p2.doomed, `state=${p2.state}`);
+  }
+}
+
+{
+  // もう一度スキルを押すと宙返りに切り替えて降りる。判定は持たない
+  const sim = newSim(['cavalier', 'swordsman']);
+  place(sim, 400, 1600);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 12, 0);
+  run(sim, 1, BTN.SKILL);
+  run(sim, 10, 0);
+  const y0 = p1.y;
+  run(sim, 1, BTN.SKILL);
+  run(sim, 1, 0);
+  check('突進中にスキルで降下へ切り替わる', p1.moveId === 'boostDrop', `move=${p1.moveId}`);
+
+  let hits = 0;
+  let ticks = 0;
+  while (ticks < 60 && p1.moveId === 'boostDrop') {
+    hits += p1.activeHits().length;
+    run(sim, 1, 0);
+    ticks += 1;
+  }
+  check('降下に攻撃判定は無い', hits === 0, `hits=${hits}`);
+  check('降下は落下より速く地面に着く', p1.y === 0 && ticks < y0 / 10,
+    `y=${p1.y.toFixed(1)} ticks=${ticks} from=${y0.toFixed(0)}`);
+  check('降下の着地硬直は軽い', p1.landLag === getCharacter('cavalier').moves.boostDrop.landLag,
+    `landLag=${p1.landLag}`);
+}
+
+// ── キャヴァリアの演出 ──────────────────────────────────────
+// 絵そのものは目で見るしかないが、「どこに何を出すか」はデータなので確かめられる。
+section('キャヴァリアの演出');
+{
+  const def = getCharacter('cavalier');
+
+  // 光の弧は「ここに攻撃判定がある」という合図でもある。
+  // 判定を持たない技（後退ブースト・宙返り降下）に付くと嘘になる。
+  const lying = Object.values(def.moves)
+    .filter((m) => m.spawns.some((s) => s.type === 'slash') && m.hits.length === 0)
+    .map((m) => m.id);
+  check('光の弧は判定のある技にだけ付く', lying.length === 0, lying.join(' '));
+
+  // 鋼の刃の色のままだとビームに見えない。技側で色を差し替えている
+  const arcs = Object.values(def.moves).flatMap((m) => m.spawns.filter((s) => s.type === 'slash'));
+  check('弧はビームの色になっている', arcs.length >= 8 && arcs.every((s) => s.tint),
+    `n=${arcs.length}`);
+
+  // 一番よく振る技に弧を付けると、白い帯のほうが攻撃の絵に見えてしまう。
+  // 薄いコマの穴埋めは発光層（beamGlow）の担当で、弧の仕事ではない
+  check('切り抜けに弧は付かない',
+    def.moves.boostSlash.spawns.every((s) => s.type !== 'slash'),
+    def.moves.boostSlash.spawns.map((s) => s.type).join(' '));
+
+  // 弧が残るのは「絵の刃より判定が先まで出ている技」だけ。
+  // 出しっぱなしにせず、判定の出ている間を覆えているかを見る
+  for (const id of ['pierce', 'pierceHold', 'drillDash']) {
+    const m = def.moves[id];
+    const covered = m.hits.every((h) =>
+      m.spawns.some((s) => s.frame <= h.start && s.frame + s.duration >= h.start));
+    check(`${id}: 弧は判定の出ている間を覆う`, covered,
+      m.spawns.map((s) => `${s.frame}+${s.duration}`).join(' '));
+  }
+}
+
+{
+  // スラスターの粒（描画専用）。湧かせ方の判断は純粋な計算なので、
+  // ブラウザを出さずにそのまま叩ける。
+  const { SparkleField } = await import('../src/render/sparkles.js');
+  const def = getCharacter('cavalier');
+  const th = def.thruster;
+  check('湧き始める速さは最大より遅い', th.idle < th.full, `${th.idle} / ${th.full}`);
+  check('歩きでは湧かない速さになっている', th.idle >= def.walkSpeed - 0.5,
+    `idle=${th.idle} walk=${def.walkSpeed}`);
+
+  const field = new SparkleField();
+  const fake = (vx, vy, extra = {}) => ({
+    def, index: 0, x: 900, y: 0, facing: 1, vx, vy, hitstop: 0, isKO: false, ...extra,
+  });
+  // 常時漏れるぶんには濃さ（dim）が付いている。排気と見分けるのに使う
+  const ambient = () => field.parts.filter((p) => p.dim != null);
+  const exhaust = () => field.parts.filter((p) => p.dim == null);
+
+  // 止まっていても背中から漏れ続ける
+  for (let i = 0; i < 30; i += 1) field.emit(fake(0, 0));
+  check('止まっていても粒が出る', ambient().length > 5, `n=${ambient().length}`);
+  check('止まっているぶんは背中側から出る', ambient().every((p) => p.x < 900),
+    `x=${ambient().map((p) => (p.x - 900).toFixed(0)).join(' ').slice(0, 40)}`);
+  check('止まっているぶんは排気ではない', exhaust().length === 0, `n=${exhaust().length}`);
+
+  field.clear();
+  for (let i = 0; i < 20; i += 1) field.emit(fake(1.5, 0));
+  check('歩く速さでは排気が出ない', exhaust().length === 0, `n=${exhaust().length}`);
+
+  field.clear();
+  for (let i = 0; i < 20; i += 1) field.emit(fake(9.2, 0));
+  check('ブーストすると排気が出る', exhaust().length >= 20, `n=${exhaust().length}`);
+  // 進行方向の逆へ流れること（右へ進んでいるなら粒は左へ）
+  check('排気は進行方向の逆へ流れる', exhaust().every((p) => p.vx < 0),
+    exhaust().map((p) => p.vx.toFixed(1)).join(' ').slice(0, 60));
+  check('排気は体の後ろから湧く', exhaust().every((p) => p.x < 900), 'x');
+
+  const before = field.parts.length;
+  for (let i = 0; i < 120; i += 1) field.step();
+  check('粒は寿命で消える', field.parts.length === 0, `${before} → ${field.parts.length}`);
+
+  // ヒットストップ中は本人が止まっているので、湧かせると 1 か所に溜まる
+  field.clear();
+  for (let i = 0; i < 20; i += 1) field.emit(fake(9.2, 0, { hitstop: 4 }));
+  check('ヒットストップ中は湧かない', field.parts.length === 0, `n=${field.parts.length}`);
+
+  // 他のキャラは thruster を持たないので、まかり間違っても撒かない
+  for (let i = 0; i < 20; i += 1) {
+    field.emit({
+      def: getCharacter('swordsman'), index: 1,
+      x: 0, y: 0, facing: 1, vx: 9, vy: 0, hitstop: 0, isKO: false,
+    });
+  }
+  check('スラスターを持たないキャラは撒かない', field.parts.length === 0, `n=${field.parts.length}`);
+}
+
+{
+  // ダッシュの絵（move シート）は閉じたループではないので、繰り返さず
+  // 最後のコマで止める。ここが loop に戻ると、走っている最中に一度巻き戻る。
+  const { resolveFrame } = await import('../src/render/spritebank.js');
+  const { readFileSync: readSheet } = await import('node:fs');
+  const sheet = JSON.parse(
+    readSheet(new URL('../assets/characters/cavalier.json', import.meta.url), 'utf8'));
+
+  const sim = newSim(['cavalier', 'swordsman']);
+  place(sim, 400, 1500);
+  const p1 = sim.fighters[0];
+  // 同方向 2 度押しでダッシュに入る
+  run(sim, 1, BTN.RIGHT);
+  run(sim, 2, 0);
+  run(sim, 60, BTN.RIGHT);
+  check('ダッシュしている', p1.state === STATE.DASH, `state=${p1.state}`);
+  check('ダッシュの絵は繰り返さない', p1.anim.loop === false, `loop=${p1.anim.loop}`);
+
+  const last = sheet.animations[getCharacter('cavalier').anims.dash].frames - 1;
+  check('最後のコマで止まっている', resolveFrame(p1.anim, sheet).index === last,
+    `frame=${resolveFrame(p1.anim, sheet).index} / last=${last}`);
+
+  // 走りが閉じたループになっている他のキャラは、今までどおり繰り返す
+  const sim2 = newSim(['swordsman', 'berserker']);
+  place(sim2, 400, 1500);
+  const q = sim2.fighters[0];
+  run(sim2, 1, BTN.RIGHT);
+  run(sim2, 2, 0);
+  run(sim2, 60, BTN.RIGHT);
+  check('走りが閉じているキャラは繰り返す', q.state === STATE.DASH && q.anim.loop === true,
+    `state=${q.state} loop=${q.anim.loop}`);
+}
+
+{
+  // ビームの発光層。抜き出す条件がこのキャラのビームの色に合っているか。
+  // ここが緩むと白い装甲まで光り、きつくすると薄いコマを拾えなくなる。
+  const bg = getCharacter('cavalier').beamGlow;
+  const beamish = (r, g, b) =>
+    g >= bg.minG && b >= bg.minB && Math.min(g - r, b - r) >= bg.lead;
+  check('ビームの色は拾う', beamish(120, 240, 255));
+  check('白い装甲は拾わない', !beamish(238, 244, 250));
+  check('濃紺の翼は拾わない', !beamish(34, 46, 92));
+  check('金髪は拾わない', !beamish(240, 214, 150));
+  check('芯を持ち上げる倍率がある', bg.boost > 1, `boost=${bg.boost}`);
+
+  // 画素の量が足りないコマを埋めるのがこの 2 つ。
+  // 実測の振れ幅は一番濃いコマの 40〜47% なので、2 倍あれば埋まる
+  check('薄いコマを正規化する倍率がある', bg.maxGain >= 2, `maxGain=${bg.maxGain}`);
+  check('刃のまわりに暈を焼く', bg.halo?.radius > 0 && bg.halo?.gain > 0,
+    `halo=${JSON.stringify(bg.halo)}`);
+  // 上げすぎると刃を出していないコマの拾いこぼしまで光って装甲の縁がにじむ
+  check('正規化の倍率は青にじみが出るほど高くない', bg.maxGain <= 3, `maxGain=${bg.maxGain}`);
+
+  // 刃が半透明なコマ（実測で下位 1/4 が alpha 152）は、量の話とは別の問題。
+  // 直しているのは裏当てで、renderer.js が本体より先に source-over で敷く。
+  // 加算合成は背景に光を足すだけで背景を隠さないので、ここが 0 だと必ず透ける
+  check('刃の裏当てがある', bg.backing > 0, `backing=${bg.backing}`);
+  // 裏当てで不透明になっているので、加算は艶を足すだけでいい。
+  // ここを上げると刃が白飛びして色が飛ぶ（透けは直らないまま眩しくなる）
+  check('加算より裏当てで見せている', bg.backing > bg.alpha,
+    `backing=${bg.backing} alpha=${bg.alpha}`);
+}
+
 // ── 空中攻撃 ────────────────────────────────────────────────
 section('空中攻撃');
 for (const [id, attack, skill] of [
   ['swordsman', 'airSlash', 'diveSlash'],
   ['berserker', 'airRampage', 'axeKick'],
   ['mage', 'meteorShot', 'hoverBeamCharge'],
+  ['cavalier', 'boostSlash', 'drillDash'],
 ]) {
   const sim = newSim([id, 'swordsman']);
   const p1 = sim.fighters[0];
