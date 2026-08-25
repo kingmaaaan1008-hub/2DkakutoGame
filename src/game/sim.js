@@ -20,7 +20,13 @@ import {
 import { Fighter, PUSHBOX_W } from './fighter.js';
 import { toWorldBox, boxesOverlap } from './moves.js';
 import { getCharacter } from './characters/index.js';
-import { getProjectileDef, isProjectile, homeToward, stepLunge } from './projectiles.js';
+import {
+  getProjectileDef,
+  isProjectile,
+  homeToward,
+  popEffectOf,
+  stepLunge,
+} from './projectiles.js';
 import { Rng } from '../core/rng.js';
 
 /** ラウンド開始時の立ち位置（ステージ中央からの距離）。 */
@@ -202,7 +208,10 @@ export class Simulation {
     if (!isProjectile(spawn.type)) {
       this.addEffect(spawn.type, fighter.x, fighter.y, {
         life: spawn.duration ?? 40,
-        follow: fighter.index,
+        // 既定はキャラに追従する（斬撃の弧のように体と一緒に動くもの）。
+        // `follow: false` を書いたものは出た場所に置き去りになる
+        // ＝ 煙玉のように「そこに残るもの」用。
+        follow: spawn.follow === false ? null : fighter.index,
         facing: fighter.facing,
         // 判定と同じ原点・太さ・長さ。描画側はこれを見て描く
         ox: spawn.origin?.x ?? 0,
@@ -211,6 +220,7 @@ export class Simulation {
         length: spawn.length ?? 0,
         radius: spawn.radius ?? 0,
         tint: spawn.tint ?? null,
+        power: spawn.power ?? 1,
       });
       if (spawn.shake) this.shake = Math.max(this.shake, spawn.shake);
       return;
@@ -264,6 +274,11 @@ export class Simulation {
       lungeDone: false,
       /** 滑り終えて止まってからの経過フレーム。 */
       stopAge: 0,
+      /**
+       * 地面に着いて居座っているか（まきびし）。
+       * 立った時点で速度も重力も切れ、寿命が restTicks に貼り替わる。
+       */
+      resting: false,
     });
   }
 
@@ -275,7 +290,8 @@ export class Simulation {
     for (let i = this.projectiles.length - 1; i >= 0; i -= 1) {
       const p = this.projectiles[i];
       if (p.owner !== owner) continue;
-      this.addEffect('pop', p.x, p.y, { life: 14 });
+      const pop = popEffectOf(getProjectileDef(p.type));
+      if (pop) this.addEffect(pop, p.x, p.y, { life: 14 });
       this.projectiles.splice(i, 1);
     }
   }
@@ -302,10 +318,25 @@ export class Simulation {
         const hurt = target.hurtBox();
         homeToward(p, target.x, hurt.y + hurt.h * 0.55, def);
       }
+      // 落ちる飛び道具（まきびし）。置いたあとは重力も速度も切れる
+      if (def.gravity > 0 && !p.resting) p.vy -= def.gravity;
+
       p.x += p.vx;
       p.y += p.vy;
       p.age += 1;
       p.life -= 1;
+
+      // 地面に着いたらそこに居座る。寿命はここから数え直す。
+      // 落下時間は撒いた高さで変わるので、着地から数えないと
+      // 「置いた罠が何秒もつか」が撒いた高さで変わってしまう。
+      if (def.restOnGround && !p.resting && p.y <= 0) {
+        p.y = 0;
+        p.vx = 0;
+        p.vy = 0;
+        p.resting = true;
+        p.age = 0;
+        p.life = def.restTicks;
+      }
       // 止まっている間（彼氏が滑り終えたところ）は向きを据え置く。
       // 0 を右向き扱いにすると、左へ走っていた彼氏が止まった瞬間に振り返る。
       if (p.vx !== 0) p.facing = p.vx > 0 ? 1 : -1;
@@ -342,7 +373,9 @@ export class Simulation {
       }
 
       if (remove) {
-        this.addEffect('pop', p.x, p.y, { life: 14 });
+        // 消えるときの演出。飛び道具側で差し替えられる（null なら何も出さない）
+        const pop = popEffectOf(def);
+        if (pop) this.addEffect(pop, p.x, p.y, { life: 14 });
         this.projectiles.splice(i, 1);
       }
     }

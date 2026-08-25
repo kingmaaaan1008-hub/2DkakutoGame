@@ -186,6 +186,14 @@ export function profileOf(def) {
       total,
       projectile,
       /**
+       * 当てる手段をひとつも持たない技か（忍者の煙玉）。
+       *
+       * 判定も弾も無い技を「崩し」として振ると、隙を晒すだけで何も起きない。
+       * 煙玉にいたっては出したあと 3 秒間こちらの攻撃が封じられるので、
+       * **振るほど弱くなる**。振る候補から外すためにここで印を付ける。
+       */
+      harmless: !projectile && reach === 0,
+      /**
        * 掴み技か。ガードされていても通る代わりに、
        * **相手が空中にいると絶対に当たらない**ので、振る条件が普通の技と違う。
        */
@@ -218,6 +226,15 @@ export class CpuController {
      */
     this.mood = 'even';
     this.moodTicks = 0;
+    /**
+     * 最後に相手の姿を見た X 座標。
+     *
+     * 忍者の煙玉で相手が消えている間は、**ここを相手だと思って動く**。
+     * sim の中身は全部読めてしまうので、こうしないと CPU だけが
+     * 透明な相手をぴったり追いかけ続けることになり、煙玉が
+     * 「自分の攻撃を 3 秒封じるだけの技」に成り下がる。
+     */
+    this.seenX = null;
   }
 
   /**
@@ -566,9 +583,22 @@ export class CpuController {
 
     const rng = sim.rng;
     const cfg = this.cfg;
-    const dist = Math.abs(foe.x - me.x);
-    const toFoe = foe.x >= me.x ? BTN.RIGHT : BTN.LEFT;
-    const away = foe.x >= me.x ? BTN.LEFT : BTN.RIGHT;
+
+    /**
+     * 相手が煙玉で消えているか。消えている間は見えていないものとして扱い、
+     * **最後に見た位置**を相手だと思って動く。
+     *
+     * 消えている相手は攻撃を出せないので、技への反応（_incomingAttack 系）は
+     * もともと空振りになる。効くのは位置と、隙を見て差し込む判断の 2 つで、
+     * どちらも「見えていないと分からない」もの。
+     */
+    const blind = foe.isVanished;
+    if (!blind) this.seenX = foe.x;
+    const foeX = blind ? this.seenX ?? foe.x : foe.x;
+
+    const dist = Math.abs(foeX - me.x);
+    const toFoe = foeX >= me.x ? BTN.RIGHT : BTN.LEFT;
+    const away = foeX >= me.x ? BTN.LEFT : BTN.RIGHT;
 
     /**
      * 跳んでよい状況かを一度だけ決める。空中はガードできないので、
@@ -599,8 +629,10 @@ export class CpuController {
      * 掴みは相手が空中にいると絶対に当たらないので、跳ばれている間に振るのは
      * 「外して長い硬直を晒す」だけになる。逆にガードは無視して通るので、
      * 固めている相手には打撃系の崩しより価値が高い。
+     *
+     * 判定を持たないスキル（忍者の煙玉）は、そもそも振っても何も起きない。
      */
-    const skillUsable = !(prof.skill.grab && foe.airborne);
+    const skillUsable = !prof.skill.harmless && !(prof.skill.grab && foe.airborne);
     // 遠距離キャラは離れて弾を撒くのが仕事
     const ranged = prof.attack.projectile;
     const idealRange = ranged ? 430 : hitRange * 0.85;
@@ -724,7 +756,9 @@ export class CpuController {
     }
 
     // ── 相手が手を出せない ────────────────────────────────
-    const open = this._openFrames(foe);
+    // 見えていない相手の隙は分からない。消えている間に差し込めてしまうと、
+    // 位置を見失っている意味が無くなる
+    const open = blind ? 0 : this._openFrames(foe);
     if (open > 0) {
       const opts = [];
       if (dist <= hitRange && open >= prof.attack.startup) {
@@ -754,6 +788,8 @@ export class CpuController {
 
     // ── 通常の間合い争い ──────────────────────────────────
     const opts = [];
+    // 固めているかどうかも、見えていなければ分からない
+    const turtling = !blind && this._turtling(foe);
 
     // 届くなら振る
     if (dist <= hitRange && !foe.invulnerable && this.cooldown === 0) {
@@ -769,7 +805,7 @@ export class CpuController {
     // 固める相手か、出し切るまで踏み込まれない距離のときだけ。
     if (dist <= skillRange && this.cooldown === 0 && skillUsable) {
       const slow = prof.skill.startup > SLOW_STARTUP;
-      if (this._turtling(foe)) {
+      if (turtling) {
         // 打撃が通らないので、崩すならこれしかない。
         // 掴みは相手が地上に居座っている限り必ず通るので、さらに重く見る。
         opts.push({
@@ -791,7 +827,7 @@ export class CpuController {
     }
     // 固める相手には、いったん離れて仕切り直すのも手。
     // ただし下がりすぎると崩しの間合いから外れてしまうので、内側にいるときだけ。
-    if (this._turtling(foe) && dist < skillRange * 0.8) {
+    if (turtling && dist < skillRange * 0.8) {
       opts.push({ act: 'retreat', bits: away, ticks: 14, weight: cfg.spacing * 0.8 });
     }
     // 近すぎる。相手の間合いの内側で殴り合うのは割が悪い

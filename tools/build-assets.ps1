@@ -35,7 +35,11 @@ param(
   # reached 35 Mpx and the game died on iPhone while working everywhere else.
   # 8 Mpx leaves room under that ceiling, and smaller pages also mean Safari
   # only has to hold the ones actually being drawn.
-  [double]$MaxPagePixels = 8e6
+  [double]$MaxPagePixels = 8e6,
+  # Build only these character ids. Empty means all of them. Adding one character
+  # otherwise means re-encoding every atlas in the project, which takes minutes
+  # and touches files that did not change. tools/pack.mjs takes the same filter.
+  [string[]]$Only = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -65,6 +69,18 @@ $GROUNDRATIO = 0.12  # a row counts as "the character" at 12% of the busiest row
 #                these, each frame is shifted so its own silhouette lands on the
 #                sheet anchor, which pins the body in place and leaves only the
 #                intended motion (wings, limbs).
+# nudge        : per-animation anchor correction, in WORLD units, as
+#                @{ anim = @{ x = <forward>; y = <up> } }. dx/dy above move the
+#                whole sheet in source px; this moves one animation, and it moves
+#                the anchor only -- the crop is untouched, so nothing can be cut off.
+#                Needed when a row is drawn around a point that is not the feet:
+#                a body-spin filmed around the hips (the anchor ends up at waist
+#                height, so the whole body floats), or a dive filmed with the
+#                character sitting off to one side of the frame. Both leave the
+#                drawn body somewhere other than the hurt box, which is anchored
+#                at the feet. Correcting it here rather than at draw time means
+#                every consumer agrees, and the flip for a left-facing character
+#                comes out right for free.
 # stabilizeY   : the same, vertically. A flight clip filmed while the character
 #                climbs rises frame by frame, so a looping animation bounces back
 #                down every time it wraps.
@@ -140,6 +156,53 @@ $CONFIG = @(
     )
   },
   @{
+    # The ninja. One sheet carries everything, 'grabbed' and the three attack
+    # rows included, so there is nothing to line up across sheets here.
+    # walk / run are the ninja's own crouched gait, filmed in place, so neither
+    # axis needs stabilising (the sheet notes measure every row's sole line
+    # inside 632-669, i.e. within the anchor's own tolerance).
+    #
+    # 'guard' is the one row drawn at a different size: the upper body sits at
+    # 1/1.17 of the other rows (head 55 px against idle's 64). The correction
+    # lives in the game, not here, because that is where the same problem is
+    # already solved for the swordsman's run -- see animScale in
+    # src/game/characters/ninja.js. That row is also 11 frames, the first 3
+    # being the lead-in into the stance (animEntry, same file).
+    id = 'ninja'; targetHeight = 210; anchorMetric = 'body'
+    sheets = @(
+      @{ file = 'ninja'; ref = 'idle'; dx = 0; dy = 0 }
+    )
+  },
+  @{
+    # 戦闘メイド。基本動作は maid4、振り 5 行だけが maid4_attack に乗っている。
+    # どの行もその場で撮ってある（足元 y を shifty で先に揃えてある）ので、
+    # 止める必要はない。
+    #
+    # anchorMetric は 'foot'。このキャラは**待機の時点で包丁が体の後ろへ長く伸びる**ので、
+    # シルエット全体の中央値（'body'）だと刃に引っ張られて、
+    # 足ではなく「体＋刃の真ん中」が原点になる。原点がずれると、立っているだけで
+    # 体が前へはみ出して見えるうえ、判定ボックスも足元からずれてしまう。
+    # 踏んでいる足の帯だけを見る 'foot' なら刃は入らない。
+    id = 'maid'; targetHeight = 206; anchorMetric = 'foot'
+    sheets = @(
+      # dx 103 は**刃を数え落とすため**。待機の絵は包丁を体の後ろへ低く提げていて、
+      # 切っ先が靴と同じ高さまで下りてくるので、足の帯（FOOTBAND）の中に
+      # 刃まで入ってしまい、自動で出た原点が体より 45 ほど後ろに寄る。
+      # そのままだと**やられ判定が体ではなく刃に乗る**（体は前へはみ出す）。
+      # 103px ＝ ワールド 45。攻撃シート側は刃が足元に無いので補正は要らない。
+      @{ file = 'maid4';        ref = 'idle';     dx = 103; dy = 0 },
+      @{ file = 'maid4_attack'; ref = 'attack_h'; dx = 0; dy = 0
+         # spin_slash は体ごと 1 回転する絵で、**腰の高さ（回転の中心）**が
+         # アンカーに乗っている。下げないと体ぜんぶが 70 浮く。
+         # aether_slam はクリップの中でキャラが左に寄ったまま撮れているので、
+         # 落ちてくる本人だけが 45 ぶん後ろに描かれる。
+         nudge = @{
+           spin_slash  = @{ y = -70 }
+           aether_slam = @{ x = 45 }
+         } }
+    )
+  },
+  @{
     # Not a playable character: the boyfriend the schoolgirl's skill summons.
     # Built as its own atlas so the renderer can draw him like any other sprite.
     id = 'boyfriend'; targetHeight = 215; anchorMetric = 'body'
@@ -157,6 +220,11 @@ function Get-FrameBBox($sheet, $rc) {
   $b = $sheet.BBox($rc.x, $rc.y, $rc.w, $rc.h, $THR)
   if ($b[2] -eq 0) { return $null }
   return @{ x = $b[0] - $rc.x; y = $b[1] - $rc.y; w = $b[2]; h = $b[3] }
+}
+
+if ($Only.Count -gt 0) {
+  $CONFIG = @($CONFIG | Where-Object { $Only -contains $_.id })
+  if ($CONFIG.Count -eq 0) { throw "-Only に一致するキャラがありません: $($Only -join ', ')" }
 }
 
 foreach ($cfg in $CONFIG) {
@@ -245,6 +313,16 @@ foreach ($cfg in $CONFIG) {
         foreach ($rc in $anim.frameRects) { $shiftY += 0 }
       }
 
+      # per-animation anchor correction (world units). Zero unless the sheet
+      # lists this animation under 'nudge'.
+      $nudgeX = 0.0; $nudgeY = 0.0
+      if ($L.cfg.nudge -and $L.cfg.nudge.ContainsKey($name)) {
+        $n = $L.cfg.nudge[$name]
+        if ($n.ContainsKey('x')) { $nudgeX = [double]$n.x }
+        if ($n.ContainsKey('y')) { $nudgeY = [double]$n.y }
+        Write-Host ("  nudge {0,-12} x={1} y={2} (world units)" -f $name, $nudgeX, $nudgeY)
+      }
+
       # union of the frame boxes, measured after the correction
       $minX = [int]::MaxValue; $minY = [int]::MaxValue; $maxX = -1; $maxY = -1
       for ($i = 0; $i -lt $anim.frameRects.Count; $i++) {
@@ -284,8 +362,11 @@ foreach ($cfg in $CONFIG) {
         ux     = $ux; uy = $uy; uw = $uw; uh = $uh
         cw     = [int][math]::Ceiling($uw * $scale)
         ch     = [int][math]::Ceiling($uh * $scale)
-        ax     = [math]::Round(($L.anchorX - $ux) * $scale, 2)
-        ay     = [math]::Round(($L.groundY - $uy) * $scale, 2)
+        # nudge はワールド単位。アトラスは 1 ワールド単位 = Supersample テクセルで
+        # 焼いてあるので、そのぶん掛けてテクセルに直す。
+        # ax を減らすと絵は前へ、ay を増やすと絵は上へ動く（描画は -ax, -ay に置く）。
+        ax     = [math]::Round(($L.anchorX - $ux) * $scale - $nudgeX * $Supersample, 2)
+        ay     = [math]::Round(($L.groundY - $uy) * $scale + $nudgeY * $Supersample, 2)
         frames = $anim.frameRects.Count
       }
     }

@@ -1,0 +1,182 @@
+{
+  "id": "ninja",
+  "images": [
+    "ninja-0.webp",
+    "ninja-1.webp",
+    "ninja-2.webp"
+  ],
+  "pages": [
+    {
+      "w": 3720,
+      "h": 1870
+    },
+    {
+      "w": 2728,
+      "h": 2914
+    },
+    {
+      "w": 2160,
+      "h": 1288
+    }
+  ],
+  "sourceFps": 10,
+  "scale": 0.83333,
+  "height": 210,
+  "texelsPerUnit": 2,
+  "animations": {
+    "idle": {
+      "page": 2,
+      "x": 0,
+      "y": 862,
+      "cw": 224,
+      "ch": 426,
+      "frames": 8,
+      "ax": 156.15,
+      "ay": 422.5,
+      "src": "ninja"
+    },
+    "walk": {
+      "page": 1,
+      "x": 0,
+      "y": 2498,
+      "cw": 280,
+      "ch": 416,
+      "frames": 8,
+      "ax": 156.15,
+      "ay": 420,
+      "src": "ninja"
+    },
+    "run": {
+      "page": 1,
+      "x": 0,
+      "y": 426,
+      "cw": 330,
+      "ch": 410,
+      "frames": 8,
+      "ax": 191.15,
+      "ay": 413.33,
+      "src": "ninja"
+    },
+    "guard": {
+      "page": 1,
+      "x": 0,
+      "y": 2133,
+      "cw": 224,
+      "ch": 365,
+      "frames": 11,
+      "ax": 139.48,
+      "ay": 356.67,
+      "src": "ninja"
+    },
+    "hurt": {
+      "page": 2,
+      "x": 0,
+      "y": 0,
+      "cw": 270,
+      "ch": 426,
+      "frames": 8,
+      "ax": 157.81,
+      "ay": 422.5,
+      "src": "ninja"
+    },
+    "crouch": {
+      "page": 1,
+      "x": 0,
+      "y": 0,
+      "cw": 341,
+      "ch": 426,
+      "frames": 8,
+      "ax": 199.48,
+      "ay": 422.5,
+      "src": "ninja"
+    },
+    "jump": {
+      "page": 1,
+      "x": 0,
+      "y": 1640,
+      "cw": 313,
+      "ch": 493,
+      "frames": 8,
+      "ax": 185.31,
+      "ay": 496.67,
+      "src": "ninja"
+    },
+    "fall": {
+      "page": 1,
+      "x": 0,
+      "y": 836,
+      "cw": 317,
+      "ch": 410,
+      "frames": 8,
+      "ax": 187.81,
+      "ay": 510.83,
+      "src": "ninja"
+    },
+    "land": {
+      "page": 1,
+      "x": 0,
+      "y": 1246,
+      "cw": 317,
+      "ch": 394,
+      "frames": 8,
+      "ax": 167.81,
+      "ay": 395,
+      "src": "ninja"
+    },
+    "death": {
+      "page": 0,
+      "x": 0,
+      "y": 436,
+      "cw": 443,
+      "ch": 431,
+      "frames": 8,
+      "ax": 264.48,
+      "ay": 422.5,
+      "src": "ninja"
+    },
+    "grabbed": {
+      "page": 2,
+      "x": 0,
+      "y": 426,
+      "cw": 245,
+      "ch": 436,
+      "frames": 8,
+      "ax": 161.15,
+      "ay": 459.17,
+      "src": "ninja"
+    },
+    "attack_spin": {
+      "page": 0,
+      "x": 0,
+      "y": 0,
+      "cw": 465,
+      "ch": 436,
+      "frames": 8,
+      "ax": 172.81,
+      "ay": 434.17,
+      "src": "ninja"
+    },
+    "attack_smoke": {
+      "page": 0,
+      "x": 0,
+      "y": 1314,
+      "cw": 390,
+      "ch": 556,
+      "frames": 8,
+      "ax": 206.15,
+      "ay": 549.17,
+      "src": "ninja"
+    },
+    "attack_twirl": {
+      "page": 0,
+      "x": 0,
+      "y": 867,
+      "cw": 438,
+      "ch": 447,
+      "frames": 8,
+      "ax": 166.15,
+      "ay": 443.33,
+      "src": "ninja"
+    }
+  }
+}

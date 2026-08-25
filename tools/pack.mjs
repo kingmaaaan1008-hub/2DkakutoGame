@@ -39,7 +39,20 @@ async function main() {
     return;
   }
 
-  const ids = entries.filter((f) => f.endsWith('.json')).map((f) => path.basename(f, '.json'));
+  // 引数でキャラ id を渡すとそれだけを詰め直す（build-assets.ps1 の -Only と同じ）。
+  // 1 キャラ足すたびに全キャラを再エンコードすると数分かかるうえ、
+  // 変わっていないファイルの更新時刻まで動く。
+  const only = process.argv.slice(2).filter((a) => !a.startsWith('-'));
+  let ids = entries.filter((f) => f.endsWith('.json')).map((f) => path.basename(f, '.json'));
+  if (only.length > 0) {
+    const missing = only.filter((id) => !ids.includes(id));
+    if (missing.length > 0) {
+      console.error(`${IN} にマニフェストがありません: ${missing.join(', ')}`);
+      process.exitCode = 1;
+      return;
+    }
+    ids = only;
+  }
   if (ids.length === 0) {
     console.error(`${IN} にマニフェストがありません`);
     process.exitCode = 1;

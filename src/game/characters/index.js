@@ -11,8 +11,19 @@ import mage from './mage.js';
 import schoolgirl from './schoolgirl.js';
 import succubus from './succubus.js';
 import cavalier from './cavalier.js';
+import ninja from './ninja.js';
+import maid from './maid.js';
 
-export const ROSTER = [swordsman, berserker, mage, schoolgirl, succubus, cavalier];
+export const ROSTER = [
+  swordsman,
+  berserker,
+  mage,
+  schoolgirl,
+  succubus,
+  cavalier,
+  ninja,
+  maid,
+];
 
 /**
  * キャラではないが読み込みが要るスプライト。

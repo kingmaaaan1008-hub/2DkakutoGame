@@ -1,0 +1,214 @@
+{
+  "id": "maid",
+  "images": [
+    "maid-0.webp",
+    "maid-1.webp",
+    "maid-2.webp",
+    "maid-3.webp",
+    "maid-4.webp"
+  ],
+  "pages": [
+    {
+      "w": 4928,
+      "h": 1373
+    },
+    {
+      "w": 4368,
+      "h": 1618
+    },
+    {
+      "w": 4008,
+      "h": 1689
+    },
+    {
+      "w": 3616,
+      "h": 2131
+    },
+    {
+      "w": 3008,
+      "h": 469
+    }
+  ],
+  "sourceFps": 10,
+  "scale": 0.87473,
+  "height": 206,
+  "texelsPerUnit": 2,
+  "animations": {
+    "idle": {
+      "page": 3,
+      "x": 0,
+      "y": 1712,
+      "cw": 377,
+      "ch": 419,
+      "frames": 8,
+      "ax": 239.68,
+      "ay": 414.62,
+      "src": "maid4"
+    },
+    "walk": {
+      "page": 3,
+      "x": 0,
+      "y": 1288,
+      "cw": 405,
+      "ch": 424,
+      "frames": 8,
+      "ax": 276.42,
+      "ay": 423.37,
+      "src": "maid4"
+    },
+    "run": {
+      "page": 3,
+      "x": 0,
+      "y": 416,
+      "cw": 448,
+      "ch": 432,
+      "frames": 8,
+      "ax": 306.16,
+      "ay": 427.75,
+      "src": "maid4"
+    },
+    "guard": {
+      "page": 4,
+      "x": 0,
+      "y": 0,
+      "cw": 376,
+      "ch": 469,
+      "frames": 8,
+      "ax": 176.7,
+      "ay": 462.73,
+      "src": "maid4"
+    },
+    "hurt": {
+      "page": 2,
+      "x": 0,
+      "y": 839,
+      "cw": 482,
+      "ch": 385,
+      "frames": 8,
+      "ax": 323.65,
+      "ay": 380.51,
+      "src": "maid4"
+    },
+    "crouch": {
+      "page": 2,
+      "x": 0,
+      "y": 0,
+      "cw": 501,
+      "ch": 385,
+      "frames": 8,
+      "ax": 323.65,
+      "ay": 380.51,
+      "src": "maid4"
+    },
+    "jump": {
+      "page": 2,
+      "x": 0,
+      "y": 1224,
+      "cw": 475,
+      "ch": 465,
+      "frames": 8,
+      "ax": 314.03,
+      "ay": 460.99,
+      "src": "maid4"
+    },
+    "fall": {
+      "page": 2,
+      "x": 0,
+      "y": 385,
+      "cw": 489,
+      "ch": 454,
+      "frames": 8,
+      "ax": 337.65,
+      "ay": 450.49,
+      "src": "maid4"
+    },
+    "land": {
+      "page": 3,
+      "x": 0,
+      "y": 848,
+      "cw": 428,
+      "ch": 440,
+      "frames": 8,
+      "ax": 307.91,
+      "ay": 435.62,
+      "src": "maid4"
+    },
+    "death": {
+      "page": 0,
+      "x": 0,
+      "y": 988,
+      "cw": 568,
+      "ch": 385,
+      "frames": 8,
+      "ax": 345.52,
+      "ay": 380.51,
+      "src": "maid4"
+    },
+    "grabbed": {
+      "page": 3,
+      "x": 0,
+      "y": 0,
+      "cw": 452,
+      "ch": 416,
+      "frames": 8,
+      "ax": 319.28,
+      "ay": 505.6,
+      "src": "maid4"
+    },
+    "attack_h": {
+      "page": 0,
+      "x": 0,
+      "y": 0,
+      "cw": 616,
+      "ch": 528,
+      "frames": 8,
+      "ax": 325.51,
+      "ay": 523.97,
+      "src": "maid4_attack"
+    },
+    "attack_v": {
+      "page": 1,
+      "x": 0,
+      "y": 992,
+      "cw": 503,
+      "ch": 626,
+      "frames": 8,
+      "ax": 238.91,
+      "ay": 616.69,
+      "src": "maid4_attack"
+    },
+    "aether_rise": {
+      "page": 0,
+      "x": 0,
+      "y": 528,
+      "cw": 596,
+      "ch": 460,
+      "frames": 8,
+      "ax": 331.63,
+      "ay": 455.74,
+      "src": "maid4_attack"
+    },
+    "aether_slam": {
+      "page": 1,
+      "x": 0,
+      "y": 0,
+      "cw": 546,
+      "ch": 449,
+      "frames": 8,
+      "ax": 236.39,
+      "ay": 438.24,
+      "src": "maid4_attack"
+    },
+    "spin_slash": {
+      "page": 1,
+      "x": 0,
+      "y": 449,
+      "cw": 541,
+      "ch": 543,
+      "frames": 8,
+      "ax": 308.89,
+      "ay": 465.32,
+      "src": "maid4_attack"
+    }
+  }
+}

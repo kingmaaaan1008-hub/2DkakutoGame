@@ -104,6 +104,17 @@ export class Fighter {
      */
     this.hoverTicks = 0;
     /**
+     * 姿を消している残りティック（忍者の煙玉）。
+     *
+     * 0 より大きい間は
+     *   - 描画がほとんど透明になる（renderer.js）
+     *   - **攻撃とスキルが出せない**（_takeMoveInput が弾く）
+     *   - やられ判定はそのまま ＝ 相手の攻撃は普通に当たる
+     * 移動・ジャンプ・ガード・しゃがみは効く。姿を隠すのは
+     * 攻めるためではなく、間合いを読ませないためのもの。
+     */
+    this.vanishTicks = 0;
+    /**
      * 自分を掴んでいる相手の index。掴まれていなければ -1。
      * 掴んだ本人だけがこちらに判定を通せる、という判断にも使う。
      */
@@ -163,6 +174,11 @@ export class Fighter {
    */
   get invulnerable() {
     return this.state === STATE.DOWN || this.state === STATE.GRABBED;
+  }
+
+  /** 姿を消しているか。描画と「技を出せるか」の両方がここを見る。 */
+  get isVanished() {
+    return this.vanishTicks > 0;
   }
 
   /** 掴まれているか。 */
@@ -253,17 +269,37 @@ export class Fighter {
    * （歩き continuation など、切り替えのたびに先頭へ戻らないように）。
    */
   setAnim(name, opts = {}) {
+    const fps = opts.fps ?? 12;
+    /**
+     * 開始コマ。0 でなければ、そのコマから始まったところまで再生位置を進めておく。
+     *
+     * **シートの頭に「その姿勢へ入る」前段が入っているアニメを出し直すため**にある。
+     * 忍者のガードは 11 コマのうち先頭 3 コマが腕を上げる前段で、残り 8 コマが
+     * 構えたままの揺れになっている。弾くたびに頭から出し直すと、
+     * 打たれるたびに腕が下りて構え直すように見えてしまう。
+     *
+     * 引き伸ばし（stretch）とは併用しない。あちらは時間とコマの対応が別なので、
+     * 途中から始める意味がそもそも無い。
+     */
+    const from = opts.from ?? 0;
     const next = {
       name,
-      time: 0,
-      fps: opts.fps ?? 12,
+      time: from > 0 ? Math.ceil((from * 60) / fps) : 0,
+      fps,
       loop: opts.loop ?? false,
       hold: opts.hold ?? true,
       reverse: opts.reverse ?? false,
       /** 指定するとアニメ全体をこのティック数に引き伸ばす。 */
       stretch: opts.stretch ?? 0,
-      /** [開始,終了] を指定すると、そのコマ範囲だけを使う。null なら全コマ。 */
-      range: opts.range ?? null,
+      /**
+       * [開始,終了] を指定すると、そのコマ範囲だけを使う。null なら全コマ。
+       *
+       * 技側の指定（move.animRange）が無いときは、キャラ定義の `animRanges` を見る。
+       * シートの中に**その状態では使わないコマ**が入っていることがあるため
+       * （戦闘メイドの jump は前半 3 コマが屈み込みで、跳んだ瞬間には
+       * もう地面を離れているので、そこを飛ばして空中のコマから流す）。
+       */
+      range: opts.range ?? this.def.animRanges?.[name] ?? null,
       /** 先頭のコマを据え置くティック数。明けてから再生が始まる。 */
       delay: opts.delay ?? 0,
     };
@@ -322,12 +358,16 @@ export class Fighter {
     const right = (input & BTN.RIGHT) !== 0;
     const dir = left && right ? 0 : left ? -1 : right ? 1 : 0;
     const down = (input & BTN.DOWN) !== 0;
+    // 技の最中に自分で動かせる区間（move.steer）で上下に使う。
+    // 通常はジャンプ／しゃがみのボタンだが、技を出している間はどちらも
+    // 出せないので、押されているかどうかだけを操舵に回している。
+    const up = (input & BTN.UP) !== 0;
 
     // ダッシュビットは押されている間ずっと有効。2度押しと違って
     // 立ち上がりを見ないので、硬直で走りが途切れても押しっぱなしなら走りに戻る。
     if (dir !== 0 && input & BTN.DASH) dashRequest = dir;
 
-    return { dir, dashRequest, down };
+    return { dir, dashRequest, down, up };
   }
 
   _takeBuffered(name) {
@@ -344,6 +384,18 @@ export class Fighter {
       return true;
     }
     return false;
+  }
+
+  /**
+   * 技（攻撃・スキル）を出したいか。姿を消している間は出せない。
+   *
+   * 先行入力は**消さずに残す**。消えている最中に押したぶんは、
+   * 姿が戻った時点でそのまま出る（バッファの猶予に収まる押し方なら）。
+   * ジャンプ・ガード・しゃがみはこれを通さないので、消えている間も効く。
+   */
+  _takeMoveInput(name) {
+    if (this.isVanished) return false;
+    return this._takeBuffered(name);
   }
 
   // ── 状態遷移 ────────────────────────────────────────────────
@@ -455,7 +507,8 @@ export class Fighter {
   step(input, opponent, sim, controllable) {
     // 入力の読み取りはヒットストップ中も行う。
     // ここを止めると、硬直明けに技を出すための先行入力が効かなくなる。
-    const { dir, dashRequest, down } = this._readInput(controllable ? input : 0);
+    const ctl = this._readInput(controllable ? input : 0);
+    const { dir, dashRequest, down } = ctl;
 
     if (this.comboDisplayTimer > 0) this.comboDisplayTimer -= 1;
 
@@ -466,6 +519,9 @@ export class Fighter {
 
     this.anim.time += 1;
     this.stateTimer += 1;
+    // 姿を消していられる時間。状態に関係なく減るので、
+    // 消えている最中に食らっても隠れ続けるということはない。
+    if (this.vanishTicks > 0) this.vanishTicks -= 1;
 
     switch (this.state) {
       case STATE.IDLE:
@@ -485,7 +541,7 @@ export class Fighter {
         if (this.stateTimer >= this.landLag) this._toIdle();
         break;
       case STATE.MOVE:
-        this._stepMove(opponent, sim);
+        this._stepMove(opponent, sim, ctl);
         break;
       case STATE.HIT:
       case STATE.BLOCK:
@@ -516,11 +572,11 @@ export class Fighter {
     }
 
     // 行動の優先順位: 技 > ジャンプ > ガード > ダッシュ > 歩き
-    if (this._takeBuffered('skill')) {
+    if (this._takeMoveInput('skill')) {
       this.startMove(this.def.skillMove, opponent);
       return;
     }
-    if (this._takeBuffered('attack')) {
+    if (this._takeMoveInput('attack')) {
       this.startMove(this.def.attackMove, opponent);
       return;
     }
@@ -597,12 +653,12 @@ export class Fighter {
     this.vx = 0;
 
     // 技・ジャンプ・ガードで立つ。立った時点で判定も立ち姿勢に戻す
-    if (this._takeBuffered('skill')) {
+    if (this._takeMoveInput('skill')) {
       this.crouchTimer = 0;
       this.startMove(this.def.skillMove, opponent);
       return;
     }
-    if (this._takeBuffered('attack')) {
+    if (this._takeMoveInput('attack')) {
       this.crouchTimer = 0;
       this.startMove(this.def.attackMove, opponent);
       return;
@@ -651,11 +707,11 @@ export class Fighter {
    * 空中技を持たないキャラは技の分岐を素通りするだけで済む。
    */
   _stepAir(dir, opponent, sim) {
-    if (this.def.airSkillMove && this._takeBuffered('skill')) {
+    if (this.def.airSkillMove && this._takeMoveInput('skill')) {
       this.startMove(this.def.airSkillMove, opponent);
       return;
     }
-    if (this.def.airAttackMove && this._takeBuffered('attack')) {
+    if (this.def.airAttackMove && this._takeMoveInput('attack')) {
       this.startMove(this.def.airAttackMove, opponent);
       return;
     }
@@ -712,7 +768,13 @@ export class Fighter {
     this.setAnim(this.def.anims.hurt, { fps: 14, hold: true, restart: true });
   }
 
-  _stepMove(opponent, sim) {
+  /**
+   * @param {{dir:number, up:boolean, down:boolean}} ctl
+   *        技の最中に自分で動かせる区間（move.steer）で使う操作。
+   *        技データが持てるのは「決まった動き」だけなので、
+   *        竜巻のように**出したあとに行き先を選ばせる**技はここを読む。
+   */
+  _stepMove(opponent, sim, ctl = { dir: 0, up: false, down: false }) {
     let move = this.currentMove();
     this.moveFrame += 1;
 
@@ -738,6 +800,11 @@ export class Fighter {
       sim.clearProjectilesOf(this.index);
     }
 
+    // 煙に紛れて姿を消す（忍者の煙玉）。投げたコマで掛かる
+    if (move.vanish && this.moveFrame === move.vanish.frame) {
+      this.vanishTicks = move.vanish.ticks;
+    }
+
     // 自身の移動成分（前方向が正）
     for (const m of move.motion) {
       if (this.moveFrame < m.start || this.moveFrame > m.end) continue;
@@ -746,6 +813,17 @@ export class Fighter {
       // vy: 0 は「重力を打ち消してその場に留まる」という指定なので、
       // 0 かどうかではなく「書かれているか」で見る
       if (m.vy != null) this.vy = m.vy;
+    }
+
+    // 自分で舵を取れる区間。motion のあとに書いてあるので、
+    // 決め打ちの動きより操作が優先される。
+    // vx は**世界の向き**で効く（技の前方向ではない）。回っている最中に
+    // 前後の概念を持ち込むと、押した向きと飛ぶ向きが食い違うため。
+    const st = move.steer;
+    if (st && this.moveFrame >= st.from && this.moveFrame <= st.to) {
+      this.vx = ctl.dir * (st.vx ?? 0);
+      // vy を書いてあるときは、入力が無ければ 0 ＝ その高さに留まる
+      if (st.vy != null) this.vy = (ctl.up ? 1 : ctl.down ? -1 : 0) * st.vy;
     }
 
     // 弾・持続判定などの発生
@@ -767,8 +845,10 @@ export class Fighter {
       }
     }
 
-    // 移動指定の無い区間では自然に止まる
-    const moving = move.motion.some((m) => this.moveFrame >= m.start && this.moveFrame <= m.end);
+    // 移動指定の無い区間では自然に止まる（舵を取れる区間も「動いている」扱い）
+    const moving =
+      move.motion.some((m) => this.moveFrame >= m.start && this.moveFrame <= m.end) ||
+      (st != null && this.moveFrame >= st.from && this.moveFrame <= st.to);
     if (!moving && !this.airborne) this.vx *= 0.82;
   }
 
@@ -834,7 +914,8 @@ export class Fighter {
       this.y = 0;
       this.vy = 0;
       if (wasAir) {
-        this.landLag = airMoveLanded ? this.currentMove().landLag ?? LAND_LAG : LAND_LAG;
+        const landed = airMoveLanded ? this.currentMove() : null;
+        this.landLag = landed?.landLag ?? LAND_LAG;
         this.state = STATE.LAND;
         this.stateTimer = 0;
         this.moveId = null;
@@ -843,7 +924,31 @@ export class Fighter {
         this.usedGroups = [];
         this.hoverTicks = 0;
         this.vx *= 0.4;
-        this.setAnim(this.def.anims.land, { fps: 20, hold: true, restart: true });
+        /**
+         * 叩きつけて降りる技の着地（`landImpact`）。
+         *
+         * ふつうの空中技は着地した瞬間に land の絵へ移るが、それだと
+         * 「振り下ろした刃が地面に刺さっている」ような**決めの絵を持つ技**が、
+         * いちばん見せたいコマを飛ばして立ち上がりに化ける。
+         * この指定がある技は、硬直の間そのまま技の最後のコマを保持して、
+         * あわせて土煙と揺れを出す。
+         */
+        const impact = landed?.landImpact;
+        if (impact) {
+          // はみ出したコマ範囲は描画側で丸められるので、コマ数を知らないまま
+          // 「最後のコマ」を指せる（シミュレーション側は絵の枚数を知らない）
+          this.setAnim(landed.anim, { fps: 1, hold: true, restart: true, range: [999, 999] });
+          if (sim) {
+            sim.addEffect('dust', this.x, 0, {
+              life: impact.dust ?? 26,
+              radius: impact.radius ?? 150,
+              facing: this.facing,
+            });
+            sim.shake = Math.max(sim.shake, impact.shake ?? 0);
+          }
+        } else {
+          this.setAnim(this.def.anims.land, { fps: 20, hold: true, restart: true });
+        }
       } else if (crashed) {
         this.vx *= 0.35;
         if (this.doomed) {
@@ -916,7 +1021,15 @@ export class Fighter {
       this.stateTimer = 0;
       this.stunTicks = hit.blockstun;
       this.vx = pushDir * hit.pushBlock;
-      this.setAnim(this.def.anims.guard, { fps: 14, hold: true, restart: true });
+      // 弾いた手応えとしてガードの絵を頭から出し直す。ただし
+      // **構えに入る前段を持つシートは、構え終わったコマから**（animEntry）。
+      // そこを飛ばさないと、連続で弾いている間じゅう腕が下りたままになる。
+      this.setAnim(this.def.anims.guard, {
+        fps: 14,
+        hold: true,
+        restart: true,
+        from: this.def.animEntry?.[this.def.anims.guard] ?? 0,
+      });
       sim.addEffect('block', this.x + pushDir * -30, this.y + 120);
       return 'block';
     }
@@ -1043,7 +1156,7 @@ export class Fighter {
       this.state, this.stateTimer, this.moveId, this.moveFrame,
       this.moveHitLanded, this.moveAir, this.usedGroups.slice(), this.chainQueued,
       this.hitstop, this.landLag, this.downPhase, this.airJumps, this.doomed,
-      this.crouchTimer, this.hoverTicks, this.grabbedBy,
+      this.crouchTimer, this.hoverTicks, this.vanishTicks, this.grabbedBy,
       this.guardHeld, this.walkDir, this.dashDir, this.prevInput,
       this.tapDir, this.tapTimer, this.bufAttack, this.bufSkill, this.bufJump,
       this.comboCount, this.comboDisplay, this.comboDisplayTimer,
@@ -1063,7 +1176,7 @@ export class Fighter {
     this.chainQueued = s[i++];
     this.hitstop = s[i++]; this.landLag = s[i++]; this.downPhase = s[i++];
     this.airJumps = s[i++]; this.doomed = s[i++]; this.crouchTimer = s[i++];
-    this.hoverTicks = s[i++]; this.grabbedBy = s[i++];
+    this.hoverTicks = s[i++]; this.vanishTicks = s[i++]; this.grabbedBy = s[i++];
     this.guardHeld = s[i++]; this.walkDir = s[i++]; this.dashDir = s[i++]; this.prevInput = s[i++];
     this.tapDir = s[i++]; this.tapTimer = s[i++];
     this.bufAttack = s[i++]; this.bufSkill = s[i++]; this.bufJump = s[i++];

@@ -65,6 +65,34 @@ const bloodColor = (tone, alpha) => {
 const BLOOD_G = 0.72;
 
 /**
+ * 竜巻の色（`Renderer._drawTornado`）。'r,g,b' 形式で、透明度だけ使う側で足す。
+ *
+ * 気象の竜巻（灰色の土埃）ではなく、**魔力の渦**として描くための紫。
+ * 忍者のテーマ色 #9d7bd8 を基準に、
+ *
+ *   もや／覆い ＝ 濃い紫（暗く沈める。**ここが体を隠す層**）
+ *   帯／筋     ＝ 明るい藤色（加算合成で光らせる。渦の模様そのもの）
+ *   粒         ＝ ほぼ白の藤色（いちばん明るい点）
+ *   影         ＝ 地の色より暗い紫（明るい線ばかりだと紙吹雪に見える）
+ *
+ * と役割ごとに離してある。**明るさの段が近いと、重ねても模様が出ない。**
+ */
+const TORNADO = {
+  hazeOuter: '110, 84, 186',
+  hazeMid: '84, 62, 156',
+  hazeCore: '62, 44, 122',
+  veilOuter: '104, 78, 178',
+  veilMid: '84, 60, 150',
+  veilCore: '62, 44, 120',
+  band: '226, 206, 255',
+  streak: '238, 230, 255',
+  spark: '250, 246, 255',
+  shade: '46, 30, 88',
+  rim: '216, 198, 255',
+  ground: '150, 120, 226',
+};
+
+/**
  * 描画専用の疑似乱数。血しぶきの1粒ずつの向きや速さに使う。
  * シミュレーションには一切触らないので Math.sin を使ってよい
  * （effect の seed から作るので、同じリプレイなら同じ絵になる）。
@@ -166,6 +194,8 @@ export class Renderer {
 
     this._updateCamera(sim);
     const cam = this.cam;
+    // 演出の位相に使う。シミュレーション側の値なので、リプレイでも同じ絵になる
+    this._tick = sim.tick;
 
     // 画面揺れ。決定的な値なのでリプレイでも同じ揺れになる。
     let shakeX = 0;
@@ -217,7 +247,9 @@ export class Renderer {
     const rx = (44 - lift * 16) * cam.zoom;
     const ry = rx * 0.3;
     ctx.save();
-    ctx.globalAlpha = 0.4 - lift * 0.22;
+    // 消えている間は影も消す。姿だけ消して影が残ると、
+    // そこに居ることが影で丸分かりになる
+    ctx.globalAlpha = (0.4 - lift * 0.22) * this._veil(f);
     ctx.fillStyle = '#000';
     ctx.beginPath();
     ctx.ellipse(cam.toScreenX(f.x), cam.groundY, rx, ry, 0, 0, Math.PI * 2);
@@ -225,11 +257,49 @@ export class Renderer {
     ctx.restore();
   }
 
+  /**
+   * 姿の濃さ（1 = そのまま、0 = 完全に見えない）。
+   * 煙玉で消えている間だけ 1 を下回る。忍者は 0 ＝ 本当に何も残らない
+   * （キャラ定義の vanishAlpha）。
+   */
+  _veil(f) {
+    if (!f.isVanished) return 1;
+    return f.def.vanishAlpha ?? 0.13;
+  }
+
+  /**
+   * 竜巻の渦の強さ。技データの vfx を、その技の進み具合で補間する。
+   * 立ち上がりが 3 つの技に分かれていても、遊ぶ側からは
+   * 1 本の渦が育っていくように見える。
+   */
+  _tornadoPower(f) {
+    if (f.state !== STATE.MOVE) return 0;
+    const vfx = f.currentMove()?.vfx;
+    if (vfx?.type !== 'tornado') return 0;
+    const t = Math.min(1, Math.max(0, f.moveFrame / Math.max(1, f.currentMove().total)));
+    return vfx.power + ((vfx.powerTo ?? vfx.power) - vfx.power) * t;
+  }
+
   _drawFighter(f) {
     const sprite = this.sprites[f.def.id];
     if (!sprite) return;
     const cam = this.cam;
     const ctx = this.ctx;
+
+    // 煙玉で消えている間。濃さ 0 なら本体も渦も何ひとつ描かない
+    // （消えている間は技を出せないので、渦だけが残ることはない）
+    const veil = this._veil(f);
+    if (veil <= 0) return;
+
+    // 竜巻の渦。キャラを包むものなので、奥側を先に・手前側を後に描く
+    const twist = this._tornadoPower(f);
+    if (twist > 0.02) this._drawTornado(f, twist, false);
+
+    // 半透明で消すキャラ用。ここから下の描画を全部薄くする
+    if (veil < 1) {
+      ctx.save();
+      ctx.globalAlpha = veil;
+    }
 
     // 被弾直後は白く光らせる
     const flashing = f.hitstop > 0 && (f.state === STATE.HIT || f.state === STATE.GUARD_BREAK);
@@ -272,6 +342,485 @@ export class Renderer {
     if (f.def.guardWall && (f.state === STATE.GUARD || f.state === STATE.BLOCK)) {
       this._drawGuardWall(f);
     }
+
+    if (veil < 1) ctx.restore();
+
+    if (twist > 0.02) this._drawTornado(f, twist, true);
+  }
+
+  /**
+   * 竜巻。忍者の空中スキルが回っている間だけ出る。
+   *
+   * 演出そのものは `sim.effects` に載せていない。技を出している間ずっと
+   * 続くものなので、寿命を持たせると技が中断されたとき（着地で打ち切られる）に
+   * 渦だけが残ってしまう。**技データを直接読んで描く**ことで、
+   * 技が終われば必ず消える。
+   *
+   * ── どう見せたいか ──────────────────────────────────────────
+   * 気象の竜巻（土埃の柱）ではなく、**魔力の渦**として描く。
+   * 色は忍者のテーマ色に寄せた紫（`TORNADO`）で、渦に巻き付く
+   * **太い帯**が模様としてはっきり読めることを最優先にしてある。
+   *
+   * 光らせるのは帯と粒だけで、体を隠す層は普通に重ねる。
+   * **加算合成は下を明るくするだけで、何も隠せない**ので、
+   * 覆いまで光らせると「明るいのに向こうが透けて見える」ことになる。
+   *
+   * ── 濃さ ────────────────────────────────────────────────────
+   * **最高速では本人が見えなくなる。** ただし飲み込むのは回り切ってからで、
+   * 立ち上がりの 1 秒はキャラが見えている（`hide` の項を参照）。
+   *
+   * ── 「安っぽい渦」にしないために効いていること ──────────────
+   * | | やっていること | これが無いと |
+   * |---|---|---|
+   * | 芯を蛇行させる | 高さごとに中心を横へずらし、周期の違う波で揺らす | まっすぐな円錐＝置物に見える |
+   * | 輪ではなく帯を巻く | 高さと角度が同時に進む螺旋を引く（太い帯 11 本＋細い筋 40〜60 本） | 輪が縦に積まれて「輪投げ」に見える |
+   * | 帯を下から上へ流す | 各帯の開始高さを時間で送る | 回ってはいるが吸い上げていない |
+   * | 縁を毛羽立たせる | 半径に高さ方向の波を乗せ、層ごとに位相を変える | 輪郭が平行に並んで等高線に見える |
+   * | 明暗を混ぜる | 3 本に 1 本を地の色より暗く引く（暗い筋だけ加算にしない） | 光った線の集合＝紙吹雪に見える |
+   * | 粒を線で描く | 進む向きの後ろへ伸ばした短い線にする | 粒だけ止まって見え、渦から浮く |
+   * | 奥半分と手前半分を分けて描く | sin>0 の側だけを手前パスで描く | 前後関係が出ず、板が貼ってあるように見える |
+   * | 地面が近いと風が散る | 足元の高さで濃さを決める | 地面すれすれでも空中と同じ絵になる |
+   *
+   * @param {boolean} front true でキャラより手前側（sin>0）の半分だけを描く
+   */
+  _drawTornado(f, power, front) {
+    const cam = this.cam;
+    const ctx = this.ctx;
+    const z = cam.zoom;
+    const bx = cam.toScreenX(f.x);
+    const gy = cam.toScreenY(f.y);
+    const now = this._tick;
+    // 回る速さは渦の強さそのもの。立ち上がりの遅さが見て取れる
+    const spin = now * (0.05 + 0.28 * power);
+    const height = 285 * power;
+
+    /**
+     * 高さ t(0..1) での芯の横位置。**まっすぐ立てない。**
+     * 周期の違う波を 2 本足しているのは、1 本だと行って戻るだけの
+     * 往復になり、揺れの周期が読めてしまうため。
+     */
+    const axis = (t) =>
+      bx +
+      (Math.sin(now * 0.038 + t * 2.6) * 26 + Math.sin(now * 0.021 + t * 5.1) * 11) *
+        t * power * z;
+    /**
+     * 高さ t での半径。上ほど開かせると円柱ではなく漏斗になる。
+     *
+     * 指数を 2 ではなく 1.5 にしてあるのは、二乗だと上端だけが急に開いて
+     * ワイングラスの形になるため。上端の直径（220 前後）は
+     * **判定の横幅 240 に合わせてある**。ここを広げると、
+     * 見えている渦の外側が当たらない範囲になって嘘になる。
+     *
+     * 揺らぎを高さ方向にも波として持たせて、縁を毛羽立たせる。
+     */
+    const rad = (t) =>
+      (16 + (24 + 86 * t ** 1.5) * power) *
+      // 足元へ向けてすぼめる。ここを効かせないと底が平らに閉じて、
+      // 漏斗ではなく「筒を切った断面」に見える
+      Math.min(1, 0.22 + t * 6.5) *
+      (1 + Math.sin(now * 0.10 + t * 8.4) * 0.09 + Math.sin(now * 0.07 - t * 15.3) * 0.05) * z;
+    /** 高さ t の画面 Y。 */
+    const yAt = (t) => gy - height * t * z;
+    /**
+     * 輪郭の左右。**左右で違う揺れ方をさせる**のが肝で、
+     * 半径をそのまま左右に振ると、どれだけ揺らしても
+     * 左右対称の＝定規で引いた輪郭のままになる。
+     * 第 2 引数は位相で、層ごとに変えると輪郭が平行に並ばない。
+     */
+    const edge = (t, side) =>
+      rad(t) * (1 + Math.sin(now * 0.075 + t * 11.2 + side * 3.1) * 0.08
+        + Math.sin(now * 0.13 - t * 6.4 + side * 1.7) * 0.05);
+
+    /**
+     * 塗りの形をどこまで伸ばすか（t の上限）。
+     *
+     * **1 で止めてはいけない。** 上下の縁は左右の輪郭が水平に繋がって
+     * 閉じるので、そこにまだ濃さが残っていると、渦の頭を横切る直線が出る。
+     * 濃さが 0 になる高さより上まで形を伸ばしておけば、
+     * 閉じる線は完全に透明なところで引かれて見えない。
+     */
+    const TOP = 1.35;
+    /**
+     * 漏斗の塗り。濃さは **t（渦の高さ）で指定して** ここで
+     * グラデーションの位置へ直す。TOP を変えても濃さの配りが動かない。
+     *
+     * @param {[number, number][]} stops [高さ t, 濃さ] の並び
+     */
+    const funnelFill = (spread, phase, tint, stops, SEG = 40) => {
+      const g = ctx.createLinearGradient(0, gy, 0, yAt(TOP));
+      for (const [t, a] of stops) g.addColorStop(t / TOP, `rgba(${tint}, ${a})`);
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      for (let i = 0; i <= SEG; i += 1) {
+        const t = (i / SEG) * TOP;
+        const px = axis(t) - edge(t, phase) * spread;
+        if (i === 0) ctx.moveTo(px, yAt(t));
+        else ctx.lineTo(px, yAt(t));
+      }
+      for (let i = SEG; i >= 0; i -= 1) {
+        const t = (i / SEG) * TOP;
+        ctx.lineTo(axis(t) + edge(t, phase + 1) * spread, yAt(t));
+      }
+      ctx.closePath();
+      ctx.fill();
+    };
+
+    /**
+     * 手前をどれだけ塗り潰すか。**回り切ったときだけ 1 になる。**
+     *
+     * 立ち上がりの 1 秒（power 0.12〜0.72）は判定をひとつも持たない
+     * 無防備な時間で、「これから来る」と相手に見せるためにある。
+     * そこで姿まで隠すと、相手からは何をしているのか分からないまま
+     * 当たらない技になり、見せるための 1 秒が意味を失う。
+     * **隠すのは最高速に届いてから。**
+     *
+     * 0.55 までは 0 で、そこから 1.6 乗で立ち上がる。
+     * 立ち上がり 3 段目（0.72→1）の途中から一気に飲み込まれていく。
+     */
+    const hide = Math.max(0, (power - 0.55) / 0.45) ** 1.6;
+
+    /**
+     * 点の並びを線でなぞる（細い筋用）。点は [x, y, 太さ, 濃さ]。
+     * 線分ごとに太さと濃さを変えられるので、1 本の中で溶けていく筋が描ける。
+     */
+    const polyline = (run, tint) => {
+      for (let i = 1; i < run.length; i += 1) {
+        ctx.strokeStyle = `rgba(${tint}, ${run[i][3]})`;
+        ctx.lineWidth = run[i][2];
+        ctx.beginPath();
+        ctx.moveTo(run[i - 1][0], run[i - 1][1]);
+        ctx.lineTo(run[i][0], run[i][1]);
+        ctx.stroke();
+      }
+    };
+
+    /** 中心線の点 i から、線の向きに直交する方向へ太さのぶんだけ振った座標。 */
+    const offset = (run, i, wk, side) => {
+      const p = run[Math.max(0, i - 1)];
+      const q = run[Math.min(run.length - 1, i + 1)];
+      const tx = q[0] - p[0];
+      const ty = q[1] - p[1];
+      const len = Math.hypot(tx, ty) || 1;
+      const half = run[i][2] * wk * 0.5 * side;
+      return [run[i][0] - (ty / len) * half, run[i][1] + (tx / len) * half];
+    };
+
+    /**
+     * 点の並びを**面**で描く（太い帯用）。
+     *
+     * 太い帯を線分の連なりで引いてはいけない。太さが線分の長さより
+     * 大きくなるので、線分ごとの丸い端が重なって**数珠**に見える
+     * （分割を細かくするほどひどくなる）。中心線の左右へ太さのぶんだけ
+     * 振った多角形として塗れば、継ぎ目そのものが無くなる。
+     *
+     * 太く薄い下敷きと細く濃い芯の 2 枚を重ねるのは、1 枚だと縁が立って
+     * テープを貼ったように見えるため。
+     */
+    const ribbon = (run, tint) => {
+      const lead = run[run.length >> 1][3];
+      for (const [wk, ak] of [[1.8, 0.4], [0.8, 1]]) {
+        ctx.fillStyle = `rgba(${tint}, ${lead * ak})`;
+        ctx.beginPath();
+        for (let i = 0; i < run.length; i += 1) {
+          const [x, y] = offset(run, i, wk, 1);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        for (let i = run.length - 1; i >= 0; i -= 1) {
+          const [x, y] = offset(run, i, wk, -1);
+          ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fill();
+      }
+    };
+
+    /**
+     * 渦に巻き付く帯を 1 種類ぶん引く。
+     *
+     * 太い帯（渦そのものの模様）も細い筋（風）も、**同じ螺旋の式**から作る。
+     * 違うのは太さ・長さ・本数・ねじれの強さだけで、別々に書くと
+     * 2 つの渦が別々に回っているように見えてしまう。
+     *
+     * 1 本は手前側と奥側をまたぐので、**見えている側だけを取り出して
+     * 切れ目ごとに描く**（`run` が 1 つながりぶん）。
+     *
+     * @param {object} o 帯の性格
+     * @param {number} o.count   本数
+     * @param {number} o.seed    乱数の系列（種類ごとに変える）
+     * @param {number} o.span    1 本が受け持つ高さ
+     * @param {number} o.width   太さ
+     * @param {number} o.lead    濃さ
+     * @param {number} o.twist   上へ行くほど遅れて回る強さ。
+     *                           小さいと横倒しになり、湯気と区別が付かない
+     * @param {number} o.climb   下から上へ流れる速さ
+     * @param {string} o.tint    色
+     * @param {number} o.dark    何本に 1 本を暗い帯にするか（0 で混ぜない）
+     * @param {number} o.steps   1 本を何点でなぞるか
+     * @param {boolean} o.ribbon true なら面で描く（太い帯）
+     */
+    const wrap = (o) => {
+      for (let i = 0; i < o.count; i += 1) {
+        const s = o.seed + i * 3.77;
+        const base = (frand(s) + now * o.climb * (0.6 + frand(s + 1))) % 1;
+        const span = o.span * (0.6 + frand(s + 2) * 0.8);
+        const phase = frand(s + 3) * Math.PI * 2;
+        const rate = 0.9 + frand(s + 4) * 0.55;
+        // 暗い帯は加算にしない。加算合成では暗い色を足しても何も暗くならない
+        const dark = o.dark > 0 && i % o.dark === 0;
+        ctx.globalCompositeOperation = dark ? 'source-over' : 'lighter';
+        const tint = dark ? TORNADO.shade : o.tint;
+        const lead = o.lead * (0.7 + frand(s + 5) * 0.6) * (dark ? 1.15 : 1);
+        const wide = o.width * (0.6 + frand(s + 6) * 0.8) * z;
+
+        let run = [];
+        const flush = () => {
+          if (run.length > 1) (o.ribbon ? ribbon : polyline)(run, tint);
+          run = [];
+        };
+        for (let k = 0; k <= o.steps; k += 1) {
+          const kk = k / o.steps;
+          const t = base + span * kk;
+          if (t > 1) break;
+          const a = phase + spin * rate - t * o.twist;
+          if (Math.sin(a) > 0 !== front) {
+            flush();
+            continue;
+          }
+          // 帯の真ん中がいちばん濃く太く、両端は空気に溶ける。
+          // 上ほど薄くするのは、渦が高いところでほどけるため。
+          // ここを効かせないと、もやが抜けた上端で線だけが黒地に浮いて
+          // 「針金」に見える
+          const taper = Math.sin(kk * Math.PI);
+          const fade = 1 - t * 0.82;
+          const rr = rad(t);
+          run.push([
+            axis(t) + Math.cos(a) * rr,
+            yAt(t) + Math.sin(a) * rr * 0.3,
+            Math.max(0.4, wide * (0.25 + taper * 0.75) * fade),
+            lead * taper * fade,
+          ]);
+        }
+        flush();
+      }
+      ctx.globalCompositeOperation = 'source-over';
+    };
+
+    ctx.save();
+    ctx.lineCap = 'round';
+
+    // ── 本体のもや（奥側）──────────────────────────────────────
+    // 広さの違う層を重ねると、外へ行くほど薄い「魔力の壁」になる
+    if (!front && power > 0.2) {
+      for (const [spread, tint, a, phase] of [
+        [1.30, TORNADO.hazeOuter, 0.10, 0],
+        [0.94, TORNADO.hazeMid, 0.15, 6],
+        [0.58, TORNADO.hazeCore, 0.19, 12],
+      ]) {
+        // いちばん濃いのは**漏斗の腹**。足元を濃くすると層が細い先端で
+        // 重なって溜まり、渦ではなく懐中電灯の光に見える。
+        // 上は 1 を越えたところで抜く。いちばん広いところが濃いままだと
+        // 輪郭が水平に伸びてキノコの傘に見える
+        funnelFill(spread, phase, tint, [
+          [0, a * 0.5 * power], [0.4, a * power], [0.8, a * 0.28 * power], [1.06, 0],
+        ]);
+      }
+    }
+
+    /**
+     * ── 手前を覆う渦（最高速だけ）────────────────────────────
+     *
+     * 覆いは**漏斗の形をした層 3 枚 ＋ にじんだ塊**で作る。
+     *
+     * 層だけで濃さを稼ごうとすると、同じ形の輪郭が何本も揃って見えて
+     * 切り絵を貼ったようになる。逆に塊だけにすると境目は消えるが、
+     * 漏斗の輪郭まで溶けて、渦ではなく湯気の塊になる。
+     * **形は層が持ち、境目は塊が壊す。**
+     *
+     * 塊は渦の中を昇り、体の高さ（t ≦ 0.86）から出ないようにしてある。
+     * 上まで散らすと、いちばん半径の大きいところに大きな塊が溜まって、
+     * 渦の頭に雲が乗っているように見える。
+     */
+    if (front && hide > 0.01) {
+      for (const [spread, tint, a, phase] of [
+        [1.02, TORNADO.veilOuter, 0.62 * hide, 2],
+        [0.64, TORNADO.veilMid, 0.60 * hide, 8],
+        [0.36, TORNADO.veilCore, 0.55 * hide, 14],
+      ]) {
+        // 手前は**体の高さいっぱい**（頭 ＝ t 0.74 あたりまで）を濃くする。
+        // 腹だけ濃いと、隠したいはずの足と頭だけが渦から出て見えてしまう
+        funnelFill(spread, phase, tint, [
+          [0, a * 0.95], [0.5, a], [0.78, a * 0.85], [1.1, 0],
+        ], 34);
+      }
+
+      const BLOBS = 24;
+      for (let i = 0; i < BLOBS; i += 1) {
+        const s = i * 4.13;
+        const t = ((frand(s) + now * (0.0035 + frand(s + 1) * 0.006)) % 1) * 0.86;
+        const a = frand(s + 2) * Math.PI * 2 + spin * (0.75 + frand(s + 3) * 0.6);
+        const rr = rad(t);
+        const px = axis(t) + Math.cos(a) * rr * 0.3;
+        const py = yAt(t) + Math.sin(a) * rr * 0.12;
+        const R = rr * (0.4 + frand(s + 4) * 0.34);
+        const alpha = hide * (0.24 + frand(s + 5) * 0.18);
+        const g = ctx.createRadialGradient(px, py, 0, px, py, R);
+        g.addColorStop(0, `rgba(${TORNADO.veilMid}, ${alpha})`);
+        g.addColorStop(0.5, `rgba(${TORNADO.veilCore}, ${alpha * 0.66})`);
+        g.addColorStop(1, `rgba(${TORNADO.veilCore}, 0)`);
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.ellipse(px, py, R, R * 0.82, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // ── 渦を巻く帯 ─────────────────────────────────────────────
+    // 太い帯が渦の模様そのもの。ねじれを弱めにして 1 本を長く取り、
+    // 「巻き付いている」と読めるようにする
+    wrap({
+      count: 11, seed: 101, span: 0.42, width: 14, lead: 0.5 * power,
+      twist: 3.4, climb: 0.005, tint: TORNADO.band, dark: 0, steps: 16, ribbon: true,
+    });
+    // 細い筋は風。数を多く・1 本を短く・強くねじる。
+    // 最高速では手前が濃く塗り潰されるので、その上を流れる筋も濃くしないと埋もれる
+    wrap({
+      count: Math.round(40 * (1 + hide * 0.5)), seed: 7, span: 0.2, width: 1.8,
+      lead: 0.34 * power * (1 + hide), twist: 7, climb: 0.007,
+      tint: TORNADO.streak, dark: 3, steps: 10, ribbon: false,
+    });
+
+    // ── 縁の光 ─────────────────────────────────────────────────
+    // 輪郭を 1 本なぞると、もやの塊だったものが**形のあるもの**になる。
+    // 手前のパスで引くのは、最高速では覆いが奥の縁まで隠してしまうため。
+    //
+    // **左右を別々に、上端は閉じずに引く。** 閉じたパスをそのまま
+    // なぞると、上端を横切る 1 本の直線が出て、切り口が見えてしまう。
+    // 上へ向かって薄れさせるのも同じ理由（もやは上端で抜けるので、
+    // 縁だけが残ると輪郭線を描いたように見える）
+    if (front && power > 0.3) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineWidth = 2.2 * z;
+      const SEG = 24;
+      for (const [dir, phase] of [[-1, 4], [1, 5]]) {
+        let prev = null;
+        for (let i = 0; i <= SEG; i += 1) {
+          const t = i / SEG;
+          const px = axis(t) + dir * edge(t, phase) * 0.98;
+          const py = yAt(t);
+          if (prev) {
+            ctx.strokeStyle = `rgba(${TORNADO.rim}, ${0.2 * power * (1 - t) ** 1.2})`;
+            ctx.beginPath();
+            ctx.moveTo(prev[0], prev[1]);
+            ctx.lineTo(px, py);
+            ctx.stroke();
+          }
+          prev = [px, py];
+        }
+      }
+      ctx.restore();
+    }
+
+    // ── 巻き込まれた粒 ─────────────────────────────────────────
+    // 点ではなく**進む向きの後ろへ伸ばした短い線**で描く。
+    // 丸で描くと粒だけが止まって見えて、渦から浮いてしまう
+    const motes = Math.round(26 * power * (1 + hide));
+    ctx.save();
+    for (let i = 0; i < motes; i += 1) {
+      const s = i * 7.31;
+      // 位相をずらしたのこぎり波で、粒ごとに違う速さで昇らせる
+      const t = (now * (0.008 + frand(s) * 0.017) + frand(s + 1)) % 1;
+      const a = spin * (1.15 + frand(s + 2) * 0.8) + i * 1.97;
+      if (Math.sin(a) > 0 !== front) continue;
+      const rr = rad(t) * (0.72 + frand(s + 3) * 0.44);
+      const px = axis(t) + Math.cos(a) * rr;
+      const py = yAt(t) + Math.sin(a) * rr * 0.3;
+      const len = (2 + frand(s + 4) * 7) * power * z;
+      // 3 割は暗い欠片。光る粒だけだと、渦ではなく火花の輪に見える
+      const grit = frand(s + 5) < 0.34;
+      // 濃さは**足元でも 0 に戻す**。上へ薄れるだけにすると、
+      // 半径のいちばん細い足元に全部の粒が溜まって、そこだけ光る点になる
+      const solid = Math.min(1, t * 5) * (1 - t);
+      ctx.globalCompositeOperation = grit ? 'source-over' : 'lighter';
+      ctx.strokeStyle = grit
+        ? `rgba(${TORNADO.shade}, ${solid * 0.8 * power})`
+        : `rgba(${TORNADO.spark}, ${solid * 0.72 * power})`;
+      ctx.lineWidth = (grit ? 1.9 : 1.2) * z;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      // 接線の逆向き（＝通ってきた側）へ引き、昇ったぶんだけ下へも垂らす
+      ctx.lineTo(px + Math.sin(a) * len, py - Math.cos(a) * len * 0.3 + len * 0.5);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // ── 芯の吸い込み ───────────────────────────────────────────
+    // 漏斗のいちばん細いところに光を溜めると、帯が「そこから伸びている」
+    // ように見えて 1 本の渦にまとまる
+    if (!front) {
+      const r = (16 + 20 * power) * z;
+      const g = ctx.createRadialGradient(bx, gy, 0, bx, gy, r);
+      g.addColorStop(0, `rgba(${TORNADO.band}, ${0.16 * power})`);
+      g.addColorStop(1, `rgba(${TORNADO.band}, 0)`);
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.ellipse(bx, gy, r, r * 0.34, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // ── 地面が近いときに散る風 ─────────────────────────────────
+    // 竜巻は空中技だが、低く飛べば足元は地面すれすれになる。
+    // そこで何も起きないと、渦が地面に触れていないことがはっきり見えてしまう。
+    // 濃さは足元の高さだけで決めるので、降りるほど自然に立ち上がる
+    const reach = Math.max(0, 1 - f.y / 110) * power;
+    if (reach > 0.02) {
+      const g0 = cam.groundY;
+      const spanX = (80 + 90 * power) * z;
+      if (!front) {
+        // **平たく潰した座標系で、丸として描く。** 楕円に丸いグラデーションを
+        // 敷くと、濃さが丸く薄れるのに形は平たいので、上下だけが
+        // 薄れきる前に切れて縁が立つ
+        ctx.save();
+        ctx.translate(bx, g0);
+        ctx.scale(1, 0.26);
+        const g = ctx.createRadialGradient(0, 0, 0, 0, 0, spanX);
+        g.addColorStop(0, `rgba(${TORNADO.ground}, ${0.26 * reach})`);
+        g.addColorStop(0.5, `rgba(${TORNADO.ground}, ${0.12 * reach})`);
+        g.addColorStop(1, `rgba(${TORNADO.ground}, 0)`);
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(0, 0, spanX, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      // 外へ逃げていく風。のこぎり波なので、広がりながら薄れて消える
+      for (let i = 0; i < 14; i += 1) {
+        const s = i * 5.13;
+        const k = (now * (0.012 + frand(s) * 0.014) + frand(s + 1)) % 1;
+        const a = frand(s + 2) * Math.PI * 2 + spin * 0.4;
+        if (Math.sin(a) > 0 !== front) continue;
+        const d = spanX * (0.25 + k * 0.9);
+        const px = bx + Math.cos(a) * d;
+        const py = g0 - k * 26 * z + Math.sin(a) * d * 0.24;
+        const size = (0.5 + k) * z;
+        const rx = (7 + frand(s + 3) * 15) * size;
+        const ry = (5 + frand(s + 4) * 9) * size;
+        // **縁を立てない。** 塗り潰しの楕円で描くと、風ではなく
+        // 紫の小石が転がっているように見える
+        const g = ctx.createRadialGradient(px, py, 0, px, py, rx);
+        g.addColorStop(0, `rgba(${TORNADO.ground}, ${(1 - k) * 0.3 * reach})`);
+        g.addColorStop(1, `rgba(${TORNADO.ground}, 0)`);
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.ellipse(px, py, rx, ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
   }
 
   /**
@@ -325,6 +874,10 @@ export class Renderer {
       this._drawLaser(p, def);
       return;
     }
+    if (def.style === 'caltrop') {
+      this._drawCaltrop(p, def);
+      return;
+    }
     const cam = this.cam;
     const ctx = this.ctx;
     const sx = cam.toScreenX(p.x);
@@ -352,6 +905,396 @@ export class Renderer {
     ctx.moveTo(sx, sy);
     ctx.lineTo(sx - p.vx * 2.6 * cam.zoom, sy + p.vy * 2.6 * cam.zoom);
     ctx.stroke();
+    ctx.restore();
+  }
+
+  /**
+   * まきびし。落ちている間は回りながら、地面に着いたら刺さって止まる。
+   *
+   * **踏むまで何も起きない技**なので、描き方が判断材料そのものになる。
+   *
+   * | | やっていること | これが無いと |
+   * |---|---|---|
+   * | 落下中は回してぶらす | 角度を進め、通ってきた位置に残像を 2 枚置く | 落としたのか置いてあるのか分からない |
+   * | 3 つの形を変える | 落ちた x から大きさ・回る速さ・傾きを引く | 同じ絵が 3 つ並んで、判子を押したように見える |
+   * | 鉄に見せる | 棘 1 本を「暗い地 → 鉄の面 → 光の当たる稜線」の 3 枚で描く | 単色の三角形＝紙細工に見える |
+   * | 刺さった足を埋める | 地面の線から下を切り落とし、根元に土を盛る | 地面に**置いた**だけに見える |
+   * | 影をぼかす | 濃さの違う楕円を 3 枚重ね、高さで薄くする | 影が輪郭を持って切り絵に見える／浮いて見える |
+   * | 消える手前で点滅させる | 残り 54 フレームから明滅 | いつ切れるか分からず、踏む側も撒く側も読めない |
+   *
+   * 形は四方に棘の出た撒菱そのもの。真上を向いた 1 本を長く描くと、
+   * 「踏んだら刺さる」が横から見て伝わる。
+   */
+  _drawCaltrop(p, def) {
+    const cam = this.cam;
+    const ctx = this.ctx;
+    const z = cam.zoom;
+    const sx = cam.toScreenX(p.x);
+    const sy = cam.toScreenY(p.y);
+    const ground = cam.toScreenY(0);
+
+    /**
+     * 個体差の種。**落とした x から引く**ので、同じ 1 つは毎フレーム同じ形になり、
+     * 3 つは互いに違う形になる。描画専用で、判定は 3 つとも同じ
+     * （見た目の違いが当たり判定の違いに見えない範囲に収めてある）。
+     */
+    const seed = Math.abs(p.x) * 0.137;
+    const r = def.radius * (0.86 + frand(seed) * 0.3) * z;
+    /** 刺さったときの傾き。全部が直立していると並べて置いたように見える。 */
+    const tilt = (frand(seed + 1) - 0.5) * 0.32;
+    /** 落ちている間だけ回る。着いたら 1 本が真上を向いた姿勢で止まる。 */
+    const rate = 0.2 + frand(seed + 2) * 0.16;
+    const spin = p.age * rate;
+    // 残りが少なくなったら明滅。切れる直前だけ速くする
+    const left = p.resting ? p.life : Infinity;
+    const blink =
+      left < 54 ? 0.45 + 0.55 * Math.abs(Math.sin(this._tick * (left < 20 ? 0.5 : 0.22))) : 1;
+
+    // 鉄の色。地・面・稜線の 3 段。def.color は真ん中の「面」として使う
+    const IRON_DARK = 'rgba(14, 17, 25, 0.94)';
+    const IRON_LIT = '#e9eef8';
+
+    ctx.save();
+
+    /**
+     * 接地の影。**落ちている間も出す。** どこに着くかが先に見えていないと、
+     * 撒かれた側は落ちてくる粒を目で追うしかなくなる。
+     * 高いほど小さく薄くするのは、キャラの影と同じ理屈。
+     */
+    const lift = Math.min(1, p.y / 240);
+    for (const [k, a] of [[1.8, 0.10], [1.3, 0.15], [0.85, 0.22]]) {
+      ctx.globalAlpha = blink * a * (1 - lift * 0.62);
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.ellipse(sx, ground + r * 0.06, r * k * (1 - lift * 0.4), r * k * 0.3 * (1 - lift * 0.4),
+        0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    /** 棘 1 本ぶんの三角形の頂点。先の尖った形なので、線ではなく面で描く。 */
+    const spike = (a, len, w) => [
+      [Math.cos(a) * len, Math.sin(a) * len],
+      [Math.cos(a + Math.PI / 2) * w, Math.sin(a + Math.PI / 2) * w],
+      [Math.cos(a - Math.PI / 2) * w, Math.sin(a - Math.PI / 2) * w],
+    ];
+    const tri = (pts) => {
+      ctx.beginPath();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      ctx.lineTo(pts[1][0], pts[1][1]);
+      ctx.lineTo(pts[2][0], pts[2][1]);
+      ctx.closePath();
+      ctx.fill();
+    };
+
+    /**
+     * 撒菱 1 個ぶん。原点は中心で、呼ぶ側が translate してから使う。
+     * 残像も同じものを薄く呼んで作る（別に描き分けると形がずれる）。
+     *
+     * @param {[number,number][]} angles [向き, 長さの倍率] の 4 本
+     */
+    const body = (angles, alpha) => {
+      ctx.globalAlpha = blink * alpha;
+
+      // 1) 暗い地。輪郭も兼ねる。暗い地面の上では、これが無いと沈んで消える。
+      //    **棘は細く。** 太いと 4 本が根元で繋がって、三角形の塊にしか見えない
+      ctx.fillStyle = IRON_DARK;
+      for (const [a, k] of angles) tri(spike(a, r * k * 1.14, r * 0.29));
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 2) 鉄の面
+      ctx.fillStyle = def.color;
+      for (const [a, k] of angles) tri(spike(a, r * k, r * 0.17));
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.25, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 3) 光の当たる側の稜線。**ここで初めて鉄に見える。**
+      //    棘は四角柱ではなく稜のある形なので、明るいのは片側だけになる。
+      //    画面で上に来ている根元と先を結んだ三角形がその面
+      ctx.fillStyle = IRON_LIT;
+      for (const [a, k] of angles) {
+        const w = r * 0.17;
+        const c1 = [Math.cos(a + Math.PI / 2) * w, Math.sin(a + Math.PI / 2) * w];
+        const c2 = [Math.cos(a - Math.PI / 2) * w, Math.sin(a - Math.PI / 2) * w];
+        tri([[Math.cos(a) * r * k, Math.sin(a) * r * k], c1[1] < c2[1] ? c1 : c2, [0, 0]]);
+      }
+
+      // 4) 中心の玉。丸いものが 1 つ挟まっていると、
+      //    4 本の棘が同じ 1 個の鉄から生えているように見える
+      const g = ctx.createRadialGradient(-r * 0.08, -r * 0.1, 0, 0, 0, r * 0.26);
+      g.addColorStop(0, IRON_LIT);
+      g.addColorStop(1, '#1e2430');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.19, 0, Math.PI * 2);
+      ctx.fill();
+    };
+
+    if (p.resting) {
+      /**
+       * 刺さっている姿は**上に 1 本・下に 2 本・手前に 1 本**（手前のは短く見える）。
+       * 撒菱はどう転がっても必ず 1 本が上を向く道具なので、止まったところで
+       * その形になっていないと「刺さっている」と読めない。
+       */
+      // 下の 2 本は**斜め下へ**向ける（0.45rad）。真横に近いと足が地面を
+      // なぞるだけになって、刺さらず横たわっているように見える
+      const angles = [
+        [-Math.PI / 2 + tilt, 1.28],
+        [Math.PI - 0.45 + tilt, 0.95],
+        [0.45 + tilt, 0.95],
+        [Math.PI / 2 + tilt, 0.4],
+      ];
+      // 地面の線から下は切り落とす。足が土に埋まって見えるのはこれのおかげで、
+      // 切らずに全部描くと、地面の上にそっと置いてあるようにしか見えない。
+      // 中心を地面より上げたぶんだけ、下向きの足の先が土に入る
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(sx - r * 3, sy - r * 4, r * 6, r * 4 + r * 0.06);
+      ctx.clip();
+      ctx.translate(sx, sy - r * 0.2);
+      body(angles, 1);
+      ctx.restore();
+
+      // 根元に寄った土。埋まった足の境目を隠すと、刺さり方が生々しくなる
+      ctx.globalAlpha = blink * 0.55;
+      ctx.fillStyle = '#2c2721';
+      ctx.beginPath();
+      ctx.ellipse(sx, ground + r * 0.02, r * 0.7, r * 0.22, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // 上を向いた棘の先の光り。踏んだらどこが刺さるかが分かる。
+      // 玉ではなく**尖ったまま光らせる**ので、先端に寄せた小さな三角で描く
+      ctx.globalAlpha = blink * 0.9;
+      ctx.fillStyle = '#ffffff';
+      const up = -Math.PI / 2 + tilt;
+      ctx.save();
+      ctx.translate(sx, sy - r * 0.2);
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(up) * r * 1.26, Math.sin(up) * r * 1.26);
+      ctx.lineTo(Math.cos(up + Math.PI / 2) * r * 0.06 + Math.cos(up) * r * 0.98,
+        Math.sin(up + Math.PI / 2) * r * 0.06 + Math.sin(up) * r * 0.98);
+      ctx.lineTo(Math.cos(up - Math.PI / 2) * r * 0.06 + Math.cos(up) * r * 0.98,
+        Math.sin(up - Math.PI / 2) * r * 0.06 + Math.sin(up) * r * 0.98);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    } else {
+      // 落ちている間は向きに意味が無いので、等間隔で回すだけにしてある。
+      // 長さだけ 4 本ばらけさせておくと、回っても十字に見えない
+      const angles = (a) =>
+        [0, 1, 2, 3].map((i) => [a + (i * Math.PI) / 2, 0.92 + frand(seed + i * 1.7) * 0.2]);
+      /**
+       * 通ってきた位置に置く残像 2 枚。**落ちている速さそのもの**を
+       * `p.vy` から引いているので、加速したぶんだけ尾が伸びる。
+       * これが無いと、回ってはいるがその場に浮いているように見える。
+       */
+      for (const k of [2.4, 1.2]) {
+        ctx.save();
+        ctx.translate(sx, sy + p.vy * k * z);
+        body(angles(spin - k * rate), 0.15);
+        ctx.restore();
+      }
+      ctx.save();
+      ctx.translate(sx, sy);
+      body(angles(spin), 1);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * 煙玉の白煙。
+   *
+   * 加算合成は使わない。煙は光らないので、光らせた時点で嘘になる
+   * （血しぶきと同じ判断）。膨らみながら薄れて、ゆっくり昇る。
+   * 丸を 1 個で描くと球にしか見えないので、seed からずらした塊を重ねている。
+   */
+  _drawSmoke(fx, t) {
+    const cam = this.cam;
+    const ctx = this.ctx;
+    const z = cam.zoom;
+    // 一気に膨らんでから、じわじわ広がって薄れる
+    const grow = Math.min(1, Math.sqrt(t * 3.4));
+    const fade = t < 0.15 ? t / 0.15 : 1 - (t - 0.15) / 0.85;
+    if (fade <= 0.01) return;
+    const R = fx.radius * (0.3 + 0.7 * grow) * z;
+    const cx = cam.toScreenX(fx.x);
+    /**
+     * 塊の中心は**体の真ん中あたり**に置く。地面すれすれに出すと、
+     * 姿を消した本人が煙の上に立っているのが見えてしまい、
+     * 「煙に紛れて消えた」ではなく「薄くなった」に見える。
+     */
+    const cy = cam.toScreenY(fx.y + 96 + t * 54);
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    for (let i = 0; i < 11; i += 1) {
+      const a = frand(fx.seed + i * 4.7) * Math.PI * 2;
+      const d = i === 0 ? 0 : R * (0.2 + frand(fx.seed + i * 2.3) * 0.62) * grow;
+      const rr = R * (i === 0 ? 0.72 : 0.34 + frand(fx.seed + i * 6.1) * 0.34);
+      const px = cx + Math.cos(a) * d;
+      const py = cy + Math.sin(a) * d * 0.78;
+      const g = ctx.createRadialGradient(px, py, 0, px, py, rr);
+      g.addColorStop(0, `rgba(238, 242, 250, ${0.72 * fade})`);
+      g.addColorStop(0.55, `rgba(206, 214, 230, ${0.4 * fade})`);
+      g.addColorStop(1, 'rgba(186, 196, 216, 0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(px, py, rr, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /**
+   * 着地の砂埃（叩きつけて降りる技の `landImpact`）。
+   *
+   * 煙玉の煙（`_drawSmoke`）とは別物として描く。あちらは体を隠すための
+   * 丸い塊で、その場に湧いて留まる。こちらは踏み抜かれた地面から
+   * **舞い上がる砂**なので、
+   *
+   *   1. **左右へ逃げてから、上へ巻き上がる。** 出た瞬間は地面を這い、
+   *      時間が経つほど高く昇る。這ったまま消える塊は「砂埃」ではなく「泥」に見える
+   *   2. **昇るほど膨らんで、丸くなる。** 地面すれすれでは横に潰れているが
+   *      （空気が横へ逃げるため）、離れるにつれ形が崩れて丸に近づく
+   *   3. **砂粒が混じる。** 塊だけだと湯気で、粒だけだと火花になる。
+   *      粒は放物線で飛んで落ち、進む向きへ伸ばした短い線で描く
+   *
+   * 粒の位置は経過時間から毎回計算し直す（弾道式）。粒ごとの状態を持たないので、
+   * 巻き戻しても・描画を飛ばしても、同じ `seed` と `t` なら必ず同じ絵になる。
+   *
+   * 色は月明かりを受けた砂。白い煙にすると、同じ画面に出る煙玉と見分けが付かない。
+   */
+  _drawDust(fx, t) {
+    const cam = this.cam;
+    const ctx = this.ctx;
+    const z = cam.zoom;
+    const R = fx.radius * z;
+    const cx = cam.toScreenX(fx.x);
+    const ground = cam.toScreenY(fx.y);
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+
+    // ── 舞い上がる塊 ──────────────────────────────────────────
+    // 横へ逃げるのは頭打ちする曲線（すぐ止まる）、上へ昇るのは時間に比例
+    // （止まらない）。この差が「広がってから立ち昇る」動きになる。
+    const spread = Math.min(1, Math.sqrt(t * 3.6));
+    // 立ち上がりはほぼ即座に。ここを緩めると、踏み抜いた最初の 2〜3 コマが
+    // 薄いままになって、いちばん見せたい瞬間に何も出ていないことになる。
+    // 引きは 1.7 乗。真っ直ぐ薄くすると、最後まで灰色の靄が残って霧に見える
+    const fade = t < 0.03 ? t / 0.03 : (1 - (t - 0.03) / 0.97) ** 1.7;
+    if (fade > 0.01) {
+      // 数を多く・1 つを小さくしてある。大きな塊を数個置くと綿になるので、
+      // 小さいものを重ねて、粒の集まりとして見せる
+      for (let i = 0; i < 20; i += 1) {
+        const side = i % 2 === 0 ? 1 : -1;
+        const r0 = frand(fx.seed + i * 3.1);
+        const r1 = frand(fx.seed + i * 5.7);
+        const r2 = frand(fx.seed + i * 8.3);
+        const r3 = frand(fx.seed + i * 11.9);
+        /**
+         * 横へ逃げる距離。**縦より狭くする**のが肝で、横に広げるほど
+         * 「舞い上がった砂」ではなく「地を這う霧」に近づく。
+         * 遠くまで逃げた塊ほど薄くして、裾を引かせる。
+         */
+        const reach = 0.08 + r0 * 0.62;
+        const d = R * reach * spread;
+        // 昇る速さは塊ごとに 5 倍近く違う。揃えると板が持ち上がるように見える。
+        // 横（最大 0.7R）より縦（最大 1.2R）を大きく取って、立ち上がる形にする
+        const rise = R * (0.16 + r1 * 1.04) * t;
+        // 育ちながら薄れる。膨らませないと、ただ上へ動いただけに見える
+        const rr = R * (0.09 + r2 * 0.15) * (0.45 + spread * 0.55) * (1 + t * 1.5);
+        const px = cx + side * d + (r3 - 0.5) * R * 0.2;
+        const py = ground - rise - rr * 0.25;
+        // 地面すれすれは横へ潰れ、昇るほど丸くなる
+        const flat = 0.34 + Math.min(1, rise / (R * 0.45)) * 0.5;
+        // 遠くの塊ほど薄い。濃さを揃えると輪郭の揃った 1 枚の雲に見える
+        const a = fade * (0.56 - 0.24 * t) * (1 - reach * 0.5);
+        const g = ctx.createRadialGradient(px, py, 0, px, py, rr);
+        g.addColorStop(0, `rgba(226, 208, 176, ${a})`);
+        g.addColorStop(0.5, `rgba(190, 170, 150, ${a * 0.5})`);
+        g.addColorStop(1, 'rgba(152, 134, 128, 0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.ellipse(px, py, rr, rr * flat, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // ── 踏み抜いた瞬間の裾 ────────────────────────────────────
+    // 足元から左右へ一気に逃げる、**低くて薄い**空気。
+    // 上の塊が立ち上がるのを待たずに広がるので、着いた最初の数コマが
+    // 「ドン」と見える。t の 1/3 で消えるので、あとには残らない。
+    const skirtT = Math.min(1, t / 0.34);
+    if (skirtT < 1) {
+      const a = (1 - skirtT) ** 1.5 * 0.4;
+      for (let i = 0; i < 4; i += 1) {
+        const side = i % 2 === 0 ? 1 : -1;
+        const r0 = frand(fx.seed + i * 4.9 + 91);
+        const w = R * (0.5 + r0 * 0.5) * (0.35 + skirtT * 0.9);
+        const px = cx + side * w * 0.55;
+        const py = ground - R * 0.06;
+        const g = ctx.createRadialGradient(px, py, 0, px, py, w);
+        g.addColorStop(0, `rgba(226, 208, 176, ${a})`);
+        g.addColorStop(0.6, `rgba(186, 168, 152, ${a * 0.4})`);
+        g.addColorStop(1, 'rgba(152, 134, 128, 0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.ellipse(px, py, w, w * 0.22, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // ── 砂粒 ──────────────────────────────────────────────────
+    // 弾き飛ばされた粒。上と横へ散って、重力で落ちてくる。
+    // 落ちきった（地面より下へ行った）粒はそこで消す。
+    const grainFade = 1 - t * t;
+    if (grainFade > 0.02) {
+      ctx.lineCap = 'round';
+      for (let i = 0; i < 38; i += 1) {
+        const r0 = frand(fx.seed + i * 2.7 + 41);
+        const r1 = frand(fx.seed + i * 6.3 + 41);
+        const r2 = frand(fx.seed + i * 9.1 + 41);
+        const side = i % 2 === 0 ? 1 : -1;
+        // 斜め上へ。真上へ飛ばすと噴水になるので、横成分を必ず残す
+        const ang = (0.12 + r0 * 0.66) * Math.PI * 0.5;
+        /**
+         * 速さは 3 粒に 1 粒だけ速い。全部同じ勢いで飛ばすと、
+         * きれいな弧が揃って**花火**に見える。
+         * 遅い粒は足元に残って、跳ね上がった砂が落ちてくる時間差を作る。
+         */
+        const fast = i % 3 === 0;
+        const sp = R * (fast ? 1.3 + r1 * 1.5 : 0.35 + r1 * 0.7);
+        const vx = side * Math.cos(ang) * sp;
+        const vy = Math.sin(ang) * sp;
+        const gAcc = R * 3.4;
+        const px = cx + vx * t;
+        const py = ground - (vy * t - gAcc * t * t * 0.5);
+        // 落ちきった粒はそこで消す（地面にめり込ませない）
+        if (py > ground) continue;
+        /**
+         * 進む向きへ**わずかに**伸ばす。長く引くと砂ではなく火花の尾になり、
+         * 逆に点で置くと止まって見える。速い粒だけ少し伸びる長さにしてある。
+         */
+        const dx = vx;
+        const dy = -(vy - gAcc * t);
+        const len = Math.max(0.0001, Math.hypot(dx, dy));
+        const tail = Math.min(R * 0.045, len * 0.022);
+        const w = (0.7 + r2 * 1.2) * z;
+        ctx.strokeStyle = r2 > 0.42
+          ? `rgba(238, 220, 184, ${0.85 * grainFade})`
+          : `rgba(184, 164, 152, ${0.7 * grainFade})`;
+        ctx.lineWidth = w;
+        ctx.beginPath();
+        ctx.moveTo(px - (dx / len) * tail, py - (dy / len) * tail);
+        ctx.lineTo(px, py);
+        ctx.stroke();
+      }
+    }
+
     ctx.restore();
   }
 
@@ -495,6 +1438,16 @@ export class Renderer {
 
     if (fx.type === 'magicCircle') {
       this._drawMagicCircle(fx, t);
+      return;
+    }
+
+    if (fx.type === 'smoke') {
+      this._drawSmoke(fx, t);
+      return;
+    }
+
+    if (fx.type === 'dust') {
+      this._drawDust(fx, t);
       return;
     }
 

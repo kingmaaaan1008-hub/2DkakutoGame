@@ -104,6 +104,20 @@ const MOVE_DEFAULTS = {
    * 急降下技のように「外したら大きな隙」にしたい技はここを伸ばす。
    */
   landLag: null,
+  /**
+   * 叩きつけて降りる技の着地。{shake, dust, radius}
+   *
+   * 指定すると、着地した瞬間に
+   *   - 足元へ土煙（`dust` 演出）を出し、画面を `shake` だけ揺らす
+   *   - **land の絵に移らず、その技の最後のコマを硬直の間ずっと保持する**
+   *
+   * 2 つ目が肝で、既定では着地した瞬間に立ち上がりの絵へ移ってしまうため、
+   * 「振り下ろした刃が地面に刺さっている」ような**決めの絵を持つ技**は
+   * いちばん見せたいコマを飛ばしてしまう。
+   *
+   * `dust` は土煙の寿命（ティック）、`radius` は広がる幅。
+   */
+  landImpact: null,
   /** 出始めに相手の方を向き直すか。false だと出した瞬間の向きで固定。 */
   turnOnStart: true,
   hits: [],
@@ -113,6 +127,33 @@ const MOVE_DEFAULTS = {
    * `vy: 0` と書けば、その区間だけ落下が止まって空中に留まる。
    */
   motion: [],
+  /**
+   * 技の最中に**自分で舵を取れる**区間。{from, to, vx, vy}
+   *
+   * `motion` が「技データが決めた動き」なのに対して、こちらは
+   * 出したあとの行き先をプレイヤーに選ばせるためのもの。
+   * `motion` の**あと**に適用されるので、重なった区間では操作が勝つ。
+   *
+   * vx は左右入力 × この速さで、**世界の向き**（前方向ではない）。
+   * 回っている最中の技に前後の概念を持ち込むと、押した向きと飛ぶ向きが
+   * 食い違うため。vy を書くと上下入力でも動けて、入力が無いときは 0
+   * ＝ その高さに留まる（重力を打ち消す）。
+   */
+  steer: null,
+  /**
+   * 煙に紛れて姿を消す。{frame, ticks}
+   *
+   * frame のティックで掛かり、ticks のあいだ
+   * 「ほとんど見えない・攻撃とスキルが出せない・相手の攻撃は当たる」になる。
+   * 技そのものより長く続くので、技を終えたあとも消えたまま動ける。
+   */
+  vanish: null,
+  /**
+   * 描画側だけが読む演出の指定。判定にも移動にも一切影響しない。
+   * 技を出している間ずっと出したいもの（竜巻の渦）用で、
+   * 技が終われば消える。**出た瞬間の一発物は `spawns` の方**を使う。
+   */
+  vfx: null,
   /** 弾・持続判定などの発生。{frame, type, ...任意パラメータ} */
   spawns: [],
   /**
@@ -163,6 +204,12 @@ export function defineMove(id, raw) {
     if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || from > to) {
       throw new Error(`技 "${id}": animRange は [開始, 終了] の整数（開始 <= 終了）です`);
     }
+  }
+  if (move.steer && !(move.steer.from <= move.steer.to)) {
+    throw new Error(`技 "${id}": steer は {from, to} の区間（from <= to）です`);
+  }
+  if (move.vanish && !(move.vanish.ticks > 0)) {
+    throw new Error(`技 "${id}": vanish には消えている ticks が必要です`);
   }
   move.hits = (raw.hits ?? []).map((h, i) => {
     const hit = { ...HIT_DEFAULTS, ...h };

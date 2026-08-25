@@ -217,6 +217,39 @@ section('ガード');
   check('ガードごと崩してダウンさせる', p2.state === STATE.DOWN, `state=${p2.state}`);
 }
 
+{
+  /**
+   * 構えに入る前段を持つシート（忍者のガード）の再生位置。
+   *
+   * 忍者の guard は 11 コマで、先頭 3 コマが**腕を上げてガードに入るところ**。
+   * ガードを押した最初の 1 回はそこから流れてほしいが、打撃を弾くたびに
+   * 頭から出し直すと、弾かれるたびに腕が下りて構え直す絵になってしまう。
+   * animEntry を見て 4 コマ目から出し直しているかを、再生位置で確かめる。
+   */
+  const { resolveFrame } = await import('../src/render/spritebank.js');
+  const { readFileSync } = await import('node:fs');
+  const atlas = JSON.parse(
+    readFileSync(new URL('../assets/characters/ninja.json', import.meta.url), 'utf8')
+  );
+  const sprite = { animations: atlas.animations };
+  const entry = getCharacter('ninja').animEntry.guard;
+
+  const sim = newSim(['swordsman', 'ninja']);
+  place(sim, 800, 930);
+  const [, p2] = sim.fighters;
+  const frame = () => resolveFrame(p2.anim, sprite).index;
+
+  run(sim, 1, 0, BTN.GUARD);
+  check('ガードに入った直後は前段の先頭から', frame() === 0, `frame=${frame()}`);
+  run(sim, 30, 0, BTN.GUARD);
+  check('押し続けると構えのコマまで進む', frame() >= entry, `frame=${frame()}`);
+
+  run(sim, 1, BTN.ATTACK, BTN.GUARD);
+  for (let i = 0; i < 40 && p2.state !== STATE.BLOCK; i += 1) run(sim, 1, 0, BTN.GUARD);
+  check('弾いた絵は前段を飛ばして出し直す', p2.state === STATE.BLOCK && frame() === entry,
+    `state=${p2.state} frame=${frame()}`);
+}
+
 // ── ダウン ──────────────────────────────────────────────────
 section('ダウン');
 {
@@ -1683,6 +1716,546 @@ section('キャヴァリアの演出');
     `backing=${bg.backing} alpha=${bg.alpha}`);
 }
 
+// ── 忍者 ────────────────────────────────────────────────────
+// 「技を出す時点と当たる時点が離れている」というこのキャラの前提を見る。
+// まきびしは撒いた瞬間には当たらず、煙玉はそもそも当たらない。
+section('忍者の回し斬り');
+{
+  const sim = newSim(['ninja', 'swordsman']);
+  place(sim, 600, 1400);
+  const p1 = sim.fighters[0];
+  const x0 = p1.x;
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 1, 0);
+  check('攻撃で回し斬りが出る', p1.moveId === 'twirl', `move=${p1.moveId}`);
+  run(sim, 40, 0);
+  check('前へ踏み出す', p1.x - x0 > 40, `travel=${(p1.x - x0).toFixed(0)}`);
+  check('地上で出しても浮かない', p1.y === 0, `y=${p1.y}`);
+}
+
+{
+  // 踏み込み(twirl) → 回し(twirlSpin) の 2 段構え。
+  // 「振ってから前に出る」になっていないことを見る
+  const nin = getCharacter('ninja').moves;
+  check('踏み込みは判定を持たない', nin.twirl.hits.length === 0);
+  check('踏み込みから回しへ繋がる', nin.twirl.onEnd === 'twirlSpin', `onEnd=${nin.twirl.onEnd}`);
+  check('踏み込みの絵は走りの 1 歩ぶんだけ借りている',
+    nin.twirl.anim === 'run' && nin.twirl.animRange[1] - nin.twirl.animRange[0] === 3,
+    `anim=${nin.twirl.anim} range=${nin.twirl.animRange}`);
+  check('回しは踏み込んだ向きで固定される', nin.twirlSpin.turnOnStart === false);
+
+  const sim = newSim(['ninja', 'swordsman']);
+  place(sim, 600, 1400);
+  const p1 = sim.fighters[0];
+  const x0 = p1.x;
+  run(sim, 1, BTN.ATTACK);
+  run(sim, nin.twirl.total, 0);
+  check('踏み込んでいる間はまだ回していない', p1.moveId === 'twirl', `move=${p1.moveId}`);
+  const stepped = p1.x - x0;
+  check('判定が出る前に前へ入り切っている', stepped > 34, `travel=${stepped.toFixed(0)}`);
+  run(sim, 1, 0);
+  check('踏み込み切ったら回しに移る', p1.moveId === 'twirlSpin', `move=${p1.moveId}`);
+}
+
+{
+  // 刃が前を通るたびに 1 発、計 3 発当たる（多段が全部当たること）
+  const sim = newSim(['ninja', 'ninja']);
+  place(sim, 900, 1040);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 44, 0);
+  check('回し斬りが 3 段とも当たる', p2.comboDisplay === 0 && sim.fighters[0].comboDisplay === 3,
+    `hits=${sim.fighters[0].comboDisplay}`);
+}
+
+{
+  // 打撃なのでガードは通る（ガードを崩せないのがこのキャラの弱点）
+  const sim = newSim(['ninja', 'swordsman']);
+  place(sim, 900, 1040);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.ATTACK, BTN.GUARD);
+  run(sim, 44, 0, BTN.GUARD);
+  check('回し斬りはガードできる', !p2.doomed, `state=${p2.state}`);
+}
+
+section('忍者のまきびし');
+{
+  const sim = newSim(['ninja', 'swordsman']);
+  place(sim, 700, 1500);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 20, 0);
+  run(sim, 1, BTN.ATTACK);
+  check('空中攻撃でまきびしが出る', p1.moveId === 'caltrops', `move=${p1.moveId}`);
+  // 投げるモーションを持たない技。落ちている絵のまま、粒だけがこぼれる
+  check('まきびしは落下の絵のまま出る',
+    p1.anim.name === getCharacter('ninja').anims.fall, `anim=${p1.anim.name}`);
+  run(sim, 20, 0);
+  const mine = sim.projectiles.filter((p) => p.type === 'caltrop');
+  check('まきびしが 3 つ落ちる', mine.length === 3, `n=${mine.length}`);
+  check('撒いた瞬間はまだ空中にある', mine.every((p) => p.y > 0 && !p.resting),
+    mine.map((p) => p.y.toFixed(0)).join(','));
+  check('真下に落ちる（横へ飛ばない）', mine.every((p) => p.vx === 0),
+    mine.map((p) => p.vx).join(','));
+
+  // 落ちきると地面で止まり、そこから寿命を数え直す
+  run(sim, 40, 0);
+  const def = getProjectileDef('caltrop');
+  const rested = sim.projectiles.filter((p) => p.type === 'caltrop');
+  check('地面に着いたら止まって居座る',
+    rested.length === 3 && rested.every((p) => p.resting && p.y === 0 && p.vy === 0),
+    rested.map((p) => `${p.y.toFixed(0)}/${p.resting}`).join(' '));
+  check('寿命は着地から数え直す', rested.every((p) => p.life > def.restTicks - 45),
+    rested.map((p) => p.life).join(','));
+
+  // 5 秒（restTicks）で消える
+  run(sim, def.restTicks + 4, 0);
+  check('5 秒で消える', sim.projectiles.filter((p) => p.type === 'caltrop').length === 0);
+}
+
+{
+  // 踏むと当たる。撒いた側は自分のまきびしを踏まない
+  const sim = newSim(['ninja', 'swordsman']);
+  place(sim, 700, 1500);
+  const p1 = sim.fighters[0];
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.UP);
+  run(sim, 20, 0);
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 60, 0);
+  const spot = sim.projectiles[0].x;
+  // 撒いた本人がその上を歩いても何も起きない
+  for (let i = 0; i < 90 && p1.x > spot - 30; i += 1) run(sim, 1, BTN.LEFT);
+  check('撒いた本人は踏んでも平気', !p1.doomed, `x=${p1.x.toFixed(0)}`);
+  // 相手が歩いて入ると引っかかる
+  for (let i = 0; i < 400 && !p2.doomed; i += 1) run(sim, 1, 0, BTN.LEFT);
+  check('相手が踏むと当たる', p2.doomed, `x=${p2.x.toFixed(0)}`);
+  check('踏んだまきびしは消える',
+    sim.projectiles.filter((p) => p.type === 'caltrop').length === 2);
+}
+
+{
+  // 判定が低いので、跳び越せば当たらない。
+  // 「歩けば踏むが跳べば越える」が、この技の避け方そのもの。
+  const sim = newSim(['ninja', 'swordsman']);
+  place(sim, 700, 1300);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.UP);
+  run(sim, 20, 0);
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 60, 0);
+  const spots = sim.projectiles.map((p) => p.x);
+  // 一番右のまきびしのすぐ手前から、左へ跳び越す
+  p2.x = Math.max(...spots) + 40;
+  run(sim, 1, 0, BTN.UP | BTN.LEFT);
+  let overhead = false;
+  for (let i = 0; i < 70 && !p2.doomed; i += 1) {
+    run(sim, 1, 0, BTN.LEFT);
+    if (spots.some((sx) => Math.abs(sx - p2.x) < 24) && p2.y > 40) overhead = true;
+  }
+  check('まきびしの真上を通った', overhead, `x=${p2.x.toFixed(0)} spots=${spots.map((v) => v.toFixed(0))}`);
+  check('跳び越せば当たらない', !p2.doomed, `y=${p2.y.toFixed(0)}`);
+}
+
+{
+  // 場に 3 つまで。跳ぶたびに重ねて地面を埋めることはできない
+  const sim = newSim(['ninja', 'swordsman']);
+  place(sim, 700, 1500);
+  for (let round = 0; round < 2; round += 1) {
+    run(sim, 1, BTN.UP);
+    run(sim, 20, 0);
+    run(sim, 1, BTN.ATTACK);
+    run(sim, 50, 0);
+  }
+  check('場に 3 つまで', sim.projectiles.filter((p) => p.type === 'caltrop').length === 3,
+    `n=${sim.projectiles.length}`);
+}
+
+section('忍者の煙玉');
+{
+  const sim = newSim(['ninja', 'swordsman']);
+  place(sim, 700, 1100);
+  const p1 = sim.fighters[0];
+  const move = getCharacter('ninja').moves.smokeBomb;
+  check('煙玉は攻撃判定を持たない', move.hits.length === 0);
+  // 消えている間は本当に何も見えない（影も出ない。renderer が同じ値を掛けている）
+  check('消えている間は完全に透明', getCharacter('ninja').vanishAlpha === 0,
+    `alpha=${getCharacter('ninja').vanishAlpha}`);
+
+  run(sim, 1, BTN.SKILL);
+  check('スキルで煙玉が出る', p1.moveId === 'smokeBomb', `move=${p1.moveId}`);
+  run(sim, move.vanish.frame, 0);
+  check('投げ下ろすまでは見えている', p1.vanishTicks === 0, `v=${p1.vanishTicks}`);
+  run(sim, 1, 0);
+  check('投げたところで姿が消える', p1.vanishTicks > 0, `v=${p1.vanishTicks}`);
+  check('煙は投げた場所に残る（本人に付いてこない）',
+    sim.effects.some((fx) => fx.type === 'smoke' && fx.follow === null));
+
+  // 消えている間も移動はできる
+  run(sim, 30, 0);
+  const x0 = p1.x;
+  run(sim, 30, BTN.LEFT);
+  check('消えている間も歩ける', x0 - p1.x > 90, `dx=${(x0 - p1.x).toFixed(0)}`);
+
+  // ただし攻撃とスキルは出せない
+  run(sim, 4, BTN.ATTACK);
+  check('消えている間は攻撃が出ない', p1.moveId === null, `move=${p1.moveId}`);
+  run(sim, 4, BTN.SKILL);
+  check('消えている間はスキルも出ない', p1.moveId === null, `move=${p1.moveId}`);
+  // ジャンプは効く（逃げ道まで塞ぐと、ただの自滅技になる）
+  run(sim, 1, BTN.UP);
+  run(sim, 4, 0);
+  check('消えている間もジャンプはできる', p1.y > 0, `y=${p1.y.toFixed(0)}`);
+}
+
+{
+  // 3 秒で戻り、戻れば技が出る
+  const sim = newSim(['ninja', 'swordsman']);
+  place(sim, 700, 1100);
+  const p1 = sim.fighters[0];
+  const ticks = getCharacter('ninja').moves.smokeBomb.vanish.ticks;
+  run(sim, 1, BTN.SKILL);
+  run(sim, ticks + 20, 0);
+  check('3 秒で姿が戻る', p1.vanishTicks === 0, `v=${p1.vanishTicks}`);
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 2, 0);
+  check('戻れば技が出る', p1.moveId === 'twirl', `move=${p1.moveId}`);
+}
+
+{
+  // 透明なだけで無敵ではない。相手の攻撃は普通に当たる
+  const sim = newSim(['ninja', 'swordsman']);
+  place(sim, 900, 1040);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.SKILL);
+  run(sim, 40, 0);
+  check('消えている', p1.vanishTicks > 0, `v=${p1.vanishTicks}`);
+  for (let i = 0; i < 60 && !p1.doomed; i += 1) run(sim, 1, 0, i === 0 ? BTN.ATTACK : 0);
+  check('消えていても相手の攻撃は当たる', p1.doomed, `state=${p1.state}`);
+}
+
+section('忍者の竜巻');
+{
+  const sim = newSim(['ninja', 'swordsman']);
+  place(sim, 500, 1500);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 20, 0);
+  run(sim, 1, BTN.SKILL);
+  check('空中スキルで竜巻が出る', p1.moveId === 'tornado', `move=${p1.moveId}`);
+
+  // 立ち上がりの 1 秒は判定を持たない（＝見てから避けられる溜め）
+  let firstHit = -1;
+  const seen = [];
+  for (let i = 0; i < 200; i += 1) {
+    if (firstHit < 0 && p1.activeHits().length > 0) firstHit = i;
+    if (p1.moveId && seen.at(-1) !== p1.moveId) seen.push(p1.moveId);
+    run(sim, 1, 0);
+  }
+  check('回転が上がるまで 1 秒かかる', firstHit >= 60 && firstHit <= 70, `firstHit=${firstHit}`);
+  check('立ち上がりから本体へ繋がる',
+    seen.join('>') === 'tornado>tornadoWind>tornadoRise>tornadoRide', seen.join('>'));
+}
+
+{
+  // 立ち上がりの間は動かず、最高速になったら操作で動ける
+  const sim = newSim(['ninja', 'swordsman']);
+  place(sim, 500, 1700);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 20, 0);
+  const xJump = p1.x;
+  run(sim, 1, BTN.SKILL);
+  run(sim, 55, BTN.RIGHT);
+  check('立ち上がりの間はその場で回る', Math.abs(p1.x - xJump) < 12,
+    `dx=${(p1.x - xJump).toFixed(0)}`);
+
+  run(sim, 10, 0);
+  const x0 = p1.x;
+  const y0 = p1.y;
+  run(sim, 40, BTN.RIGHT | BTN.UP);
+  check('最高速なら横へ動かせる', p1.x - x0 > 150, `dx=${(p1.x - x0).toFixed(0)}`);
+  check('最高速なら上へも動かせる', p1.y - y0 > 120, `dy=${(p1.y - y0).toFixed(0)}`);
+  const yTop = p1.y;
+  run(sim, 30, BTN.LEFT | BTN.DOWN);
+  check('下へも降りられる', p1.y < yTop, `y=${p1.y.toFixed(0)}`);
+}
+
+{
+  // 3 秒で終わる（立ち上がり 60 + 本体 120）
+  const nin = getCharacter('ninja').moves;
+  const total = nin.tornado.total + nin.tornadoWind.total + nin.tornadoRise.total
+    + nin.tornadoRide.total;
+  check('竜巻は 3 秒続く', total === 180, `total=${total}`);
+  // 落ちないよう舵を取り続ければ、出し切って終わる
+  const sim = newSim(['ninja', 'swordsman']);
+  place(sim, 500, 1700);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 20, 0);
+  run(sim, 1, BTN.SKILL);
+  run(sim, total + 2, BTN.UP);
+  check('出し切ると竜巻が終わる', p1.moveId !== 'tornadoRide', `move=${p1.moveId}`);
+}
+
+{
+  // 判定はある。スキルなのでガードごと崩す。
+  // 立ち上がりは跳んだ高さで回るだけなので、当てるには自分で降りていく必要がある
+  // （そこが「舵を取れる」ことの意味でもある）。
+  const sim = newSim(['ninja', 'swordsman']);
+  place(sim, 1020, 1120);
+  const p1 = sim.fighters[0];
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.UP);
+  run(sim, 20, 0);
+  run(sim, 1, BTN.SKILL);
+  // 立ち上がりの 1 秒は相手の頭上で回っているだけ
+  run(sim, 58, 0, BTN.GUARD);
+  check('立ち上がりでは当たらない', !p2.doomed, `state=${p2.state}`);
+  // 最高速になってから降りていくと、ガードごと持っていく
+  for (let i = 0; i < 120 && !p2.doomed; i += 1) run(sim, 1, BTN.DOWN, BTN.GUARD);
+  check('竜巻はガードごと崩す', p2.doomed, `state=${p2.state} y=${p1.y.toFixed(0)}`);
+}
+
+{
+  // 刻みにダウンを付けていないこと（付けるとその時点で無敵になり残りが素通りする）
+  const nin = getCharacter('ninja').moves.tornadoRide;
+  const grinds = nin.hits.slice(0, -1);
+  check('刻みはダウンを奪わない', grinds.every((h) => !h.knockdown));
+  check('締めだけがダウンを奪う', nin.hits.at(-1).knockdown === true);
+  check('竜巻は全段ガードを崩す', nin.hits.every((h) => h.guardBreak));
+  // 立ち上がりの 3 段はひとつも判定を持たない（溜めであること）
+  const wind = ['tornado', 'tornadoWind', 'tornadoRise'];
+  check('立ち上がりは判定を持たない',
+    wind.every((id) => getCharacter('ninja').moves[id].hits.length === 0));
+}
+
+// ── 戦闘メイド ──────────────────────────────────────────────
+// 「横は短いが縦に長い」「天空斬りは出したら引き返せない」という
+// このキャラの前提を見る。
+section('戦闘メイドの横薙ぎと叩き割り');
+{
+  const sim = newSim(['maid', 'swordsman']);
+  place(sim, 600, 1400);
+  const p1 = sim.fighters[0];
+  const x0 = p1.x;
+  run(sim, 1, BTN.ATTACK);
+  check('攻撃で横薙ぎが出る', p1.moveId === 'sweep', `move=${p1.moveId}`);
+  run(sim, 20, 0);
+  check('薙ぎながら前へ踏み込む', p1.x - x0 > 25, `travel=${(p1.x - x0).toFixed(0)}`);
+  check('地上で出しても浮かない', p1.y === 0, `y=${p1.y}`);
+}
+
+{
+  // 横薙ぎ(sweep) → 叩き割り(chop) の 2 段。
+  // 受付は 1 段目を振り切ったあとに開くので、当てた瞬間に押しても出ない
+  const maid = getCharacter('maid').moves;
+  check('横薙ぎから叩き割りへ繋がる',
+    maid.sweep.chains.some((c) => c.move === 'chop' && c.button === 'attack'));
+  check('連携の受付は判定が終わってから開く',
+    maid.sweep.chains[0].from > maid.sweep.hits[0].end,
+    `from=${maid.sweep.chains[0].from} hitEnd=${maid.sweep.hits[0].end}`);
+
+  const sim = newSim(['maid', 'maid']);
+  place(sim, 900, 1080);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 26, 0);
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 30, 0);
+  check('横薙ぎ → 叩き割りが繋がる', p1.comboDisplay === 2, `hits=${p1.comboDisplay}`);
+}
+
+{
+  // どちらの段もしゃがみに当たる（しゃがみは打撃をよける手段ではない）
+  for (const [label, press] of [['横薙ぎ', 0], ['叩き割り', 26]]) {
+    const sim = newSim(['maid', 'swordsman']);
+    place(sim, 900, 1070);
+    const p2 = sim.fighters[1];
+    run(sim, 12, 0, BTN.DOWN);
+    run(sim, 1, BTN.ATTACK, BTN.DOWN);
+    if (press > 0) {
+      run(sim, press, 0, BTN.DOWN);
+      run(sim, 1, BTN.ATTACK, BTN.DOWN);
+    }
+    run(sim, 30, 0, BTN.DOWN);
+    check(`${label}はしゃがみに当たる`, p2.doomed, `state=${p2.state}`);
+  }
+}
+
+{
+  // 叩き割りは頭上から地面まで通るので、跳んで逃げても当たる
+  const sim = newSim(['maid', 'swordsman']);
+  place(sim, 900, 1060);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 26, 0);
+  // 2 段目に合わせて跳び上がる
+  run(sim, 1, BTN.ATTACK, BTN.UP);
+  run(sim, 24, 0);
+  check('叩き割りは跳んだ相手にも当たる', p2.doomed, `y=${p2.y.toFixed(0)} state=${p2.state}`);
+}
+
+{
+  // 打撃なのでガードは通る（ガードを崩せるのはスキルだけ）
+  const sim = newSim(['maid', 'swordsman']);
+  place(sim, 920, 1080);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.ATTACK, BTN.GUARD);
+  run(sim, 30, 0, BTN.GUARD);
+  check('横薙ぎはガードできる', !p2.doomed, `state=${p2.state}`);
+}
+
+section('戦闘メイドの天空斬り');
+{
+  const sim = newSim(['maid', 'swordsman']);
+  place(sim, 600, 1400);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.SKILL);
+  check('スキルで天空斬りが出る', p1.moveId === 'aetherRise', `move=${p1.moveId}`);
+  check('踏み切るまでは地上にいる', p1.y === 0, `y=${p1.y.toFixed(0)}`);
+
+  let top = 0;
+  const seen = [];
+  for (let i = 0; i < 100; i += 1) {
+    if (p1.moveId && seen.at(-1) !== p1.moveId) seen.push(p1.moveId);
+    top = Math.max(top, p1.y);
+    if (p1.state === STATE.LAND) break;
+    run(sim, 1, 0);
+  }
+  check('自分の身長より高く跳び上がる', top > 260, `top=${top.toFixed(0)}`);
+  check('上りから下りへ入力なしで繋がる', seen.join('>') === 'aetherRise>aetherSlam', seen.join('>'));
+  check('降りたら着地で終わる', p1.state === STATE.LAND, `state=${p1.state}`);
+  check('外すと着地硬直が長い', p1.landLag === getCharacter('maid').moves.aetherSlam.landLag,
+    `landLag=${p1.landLag}`);
+  run(sim, 12, BTN.LEFT);
+  check('着地硬直の間は動けない', p1.state === STATE.LAND, `state=${p1.state}`);
+}
+
+{
+  // 上りでダウンを奪わないこと。ダウンさせるとその時点で無敵になり、
+  // せっかく打ち上げた相手を下りが素通りしてしまう
+  const maid = getCharacter('maid').moves;
+  check('上りはダウンを奪わない', maid.aetherRise.hits.every((h) => !h.knockdown));
+  check('下りがダウンを奪う', maid.aetherSlam.hits.at(-1).knockdown === true);
+  check('天空斬りは上りも下りもガードを崩す',
+    [...maid.aetherRise.hits, ...maid.aetherSlam.hits].every((h) => h.guardBreak));
+
+  const sim = newSim(['maid', 'swordsman']);
+  place(sim, 900, 1040);
+  const p1 = sim.fighters[0];
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.SKILL);
+  run(sim, 100, 0, BTN.GUARD);
+  check('天空斬りはガードごと崩す', p2.doomed || p2.isKO, `state=${p2.state}`);
+  check('上りで打ち上げて下りで叩き落とす', p1.comboDisplay === 2, `hits=${p1.comboDisplay}`);
+}
+
+section('戦闘メイドの回転斬り');
+{
+  const sim = newSim(['maid', 'swordsman']);
+  place(sim, 700, 1500);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 8, 0);
+  run(sim, 1, BTN.ATTACK);
+  check('空中攻撃で回転斬りが出る', p1.moveId === 'spinSlash', `move=${p1.moveId}`);
+  check('閉じたループなので回し続ける', p1.anim.loop === true, `loop=${p1.anim.loop}`);
+
+  const spin = getCharacter('maid').moves.spinSlash;
+  check('前にも後ろにも判定を持つ', spin.hits.every((h) => h.box.x < 0 && h.box.x + h.box.w > 0),
+    JSON.stringify(spin.hits[0].box));
+  check('刻みはダウンを奪わない', spin.hits.every((h) => !h.knockdown));
+}
+
+{
+  // 前を通る刃と、後ろを通る刃。跳び越されても背中側で拾える
+  for (const [label, x2] of [['前', 1060], ['後ろ', 840]]) {
+    const sim = newSim(['maid', 'swordsman']);
+    place(sim, 950, x2);
+    const p2 = sim.fighters[1];
+    run(sim, 1, BTN.UP);
+    run(sim, 8, 0);
+    run(sim, 1, BTN.ATTACK);
+    run(sim, 40, 0);
+    check(`回転斬りは${label}の相手にも当たる`, p2.doomed || p2.isKO, `state=${p2.state}`);
+  }
+}
+
+{
+  // ジャンプの絵。jump シートは前半が屈み込みで、跳んだ瞬間にはもう
+  // 地面を離れているので、そこを飛ばして**空中のコマから**流す。
+  // 頭から流すと、昇っている間ずっと地面で屈んでいる絵のままになる。
+  const sim = newSim(['maid', 'swordsman']);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 3, 0);
+  check('ジャンプは jump シートを使う', p1.anim.name === getCharacter('maid').anims.jump,
+    `anim=${p1.anim.name}`);
+  check('屈み込みのコマは飛ばす', p1.anim.range?.[0] === 3, `range=${p1.anim.range}`);
+  // 指定の無いキャラは全コマ使う（この仕組みが他へ漏れていないこと）
+  const other = newSim(['swordsman', 'maid']);
+  run(other, 1, BTN.UP);
+  run(other, 3, 0);
+  check('指定の無いキャラは全コマ使う', other.fighters[0].anim.range === null,
+    `range=${other.fighters[0].anim.range}`);
+}
+
+{
+  // 落としの着地。**土煙と揺れを出して、刃を突き立てた絵のまま固まる**
+  const sim = newSim(['maid', 'swordsman']);
+  place(sim, 700, 1500);
+  const p1 = sim.fighters[0];
+  const impact = getCharacter('maid').moves.aetherSlam.landImpact;
+  run(sim, 1, BTN.SKILL);
+  for (let i = 0; i < 120 && p1.state !== STATE.LAND; i += 1) run(sim, 1, 0);
+  check('着地した', p1.state === STATE.LAND, `state=${p1.state}`);
+  check('足元に土煙が上がる',
+    sim.effects.some((fx) => fx.type === 'dust' && fx.y === 0),
+    sim.effects.map((fx) => fx.type).join(','));
+  check('画面が揺れる', sim.shake >= impact.shake, `shake=${sim.shake}`);
+  check('着地の絵にならず、落としの絵のまま固まる',
+    p1.anim.name === 'aether_slam' && p1.anim.range != null,
+    `anim=${p1.anim.name} range=${p1.anim.range}`);
+  // 硬直が明けるまでその絵のまま
+  run(sim, impact.shake, 0);
+  check('硬直の間ずっと保持する', p1.anim.name === 'aether_slam', `anim=${p1.anim.name}`);
+  run(sim, 40, 0);
+  check('硬直が明ければ普通に戻る', p1.state !== STATE.LAND, `state=${p1.state}`);
+}
+
+{
+  // 普通の空中技は今までどおり land の絵に移る（landImpact が他へ漏れていないこと）
+  const sim = newSim(['maid', 'swordsman']);
+  place(sim, 700, 1500);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 10, 0);
+  run(sim, 1, BTN.ATTACK);
+  for (let i = 0; i < 120 && p1.state !== STATE.LAND; i += 1) run(sim, 1, 0);
+  check('回転斬りの着地は land の絵', p1.anim.name === getCharacter('maid').anims.land,
+    `anim=${p1.anim.name}`);
+  check('回転斬りでは土煙が出ない', !sim.effects.some((fx) => fx.type === 'dust'));
+}
+
+{
+  // 空中スキルは天空斬りの下りだけ。跳んだ高さからそのまま落ちてくる
+  const sim = newSim(['maid', 'swordsman']);
+  place(sim, 880, 1060);
+  const p1 = sim.fighters[0];
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.UP);
+  run(sim, 14, 0);
+  run(sim, 1, BTN.SKILL);
+  check('空中スキルで下りだけが出る', p1.moveId === 'aetherSlam', `move=${p1.moveId}`);
+  const y0 = p1.y;
+  run(sim, 6, 0);
+  check('出した時点から落ち始める', p1.y < y0, `y=${p1.y.toFixed(0)}`);
+  for (let i = 0; i < 60 && p1.state !== STATE.LAND; i += 1) run(sim, 1, 0, BTN.GUARD);
+  check('落としはガードごと崩す', p2.doomed || p2.isKO, `state=${p2.state}`);
+  check('落とし切ると着地で終わる', p1.state === STATE.LAND, `state=${p1.state}`);
+}
+
 // ── 空中攻撃 ────────────────────────────────────────────────
 section('空中攻撃');
 for (const [id, attack, skill] of [
@@ -1690,6 +2263,8 @@ for (const [id, attack, skill] of [
   ['berserker', 'airRampage', 'axeKick'],
   ['mage', 'meteorShot', 'hoverBeamCharge'],
   ['cavalier', 'boostSlash', 'drillDash'],
+  ['ninja', 'caltrops', 'tornado'],
+  ['maid', 'spinSlash', 'aetherSlam'],
 ]) {
   const sim = newSim([id, 'swordsman']);
   const p1 = sim.fighters[0];
@@ -1927,6 +2502,69 @@ section('決定性');
     return JSON.stringify(sim.save());
   };
   check('淫魔の巻き戻し後の再実行が一致する', replay() === replay());
+}
+
+{
+  // 姿を消している最中と、地面に置いたまきびしも巻き戻せる
+  // （vanishTicks が Fighter.save に、resting が飛び道具の写しに乗っているか）。
+  // ここが抜けていると、オンライン対戦で煙玉を使ったときだけ
+  // 片側が透明のまま／まきびしが宙に浮いたまま、という壊れ方をする。
+  const sim = new Simulation({ characters: ['ninja', 'cavalier'], seed: 11 });
+  const script = [];
+  for (let i = 0; i < 600; i += 1) {
+    script.push([
+      (i % 71 === 0 ? BTN.SKILL : 0) | (i % 29 === 0 ? BTN.UP : 0) |
+        (i % 41 === 0 ? BTN.ATTACK : 0) | (i % 6 < 2 ? BTN.RIGHT : 0),
+      (i % 17 === 0 ? BTN.ATTACK : 0) | (i % 8 < 3 ? BTN.LEFT : 0),
+    ]);
+  }
+  for (const inputs of script.slice(0, 260)) sim.step(inputs);
+  const snapshot = sim.save();
+  const expected = JSON.stringify(snapshot);
+  check('煙玉とまきびしが場に出ている',
+    sim.fighters[0].vanishTicks > 0 || sim.projectiles.some((p) => p.type === 'caltrop'),
+    `v=${sim.fighters[0].vanishTicks} n=${sim.projectiles.length}`);
+
+  for (const inputs of script.slice(260, 360)) sim.step(inputs);
+  sim.load(snapshot);
+  check('忍者でも save/load で巻き戻せる', JSON.stringify(sim.save()) === expected);
+
+  const replay = () => {
+    sim.load(snapshot);
+    for (const inputs of script.slice(260)) sim.step(inputs);
+    return JSON.stringify(sim.save());
+  };
+  check('忍者の巻き戻し後の再実行が一致する', replay() === replay());
+}
+
+{
+  // 天空斬りの着地は、シミュレーションの中で土煙と揺れを足す
+  // （技のフレームではなく「地面に着いた瞬間」に起きる数少ない演出）。
+  // ここが巻き戻せていないと、オンライン対戦で落としが着地した前後だけ
+  // 片側に土煙が残る／揺れがずれる、という壊れ方をする。
+  const sim = new Simulation({ characters: ['maid', 'schoolgirl'], seed: 5 });
+  const script = [];
+  for (let i = 0; i < 600; i += 1) {
+    script.push([
+      (i % 83 === 0 ? BTN.SKILL : 0) | (i % 37 === 0 ? BTN.UP : 0) |
+        (i % 47 === 0 ? BTN.ATTACK : 0) | (i % 7 < 3 ? BTN.RIGHT : 0),
+      (i % 19 === 0 ? BTN.ATTACK : 0) | (i % 9 < 4 ? BTN.LEFT : 0),
+    ]);
+  }
+  for (const inputs of script.slice(0, 200)) sim.step(inputs);
+  const snapshot = sim.save();
+  const expected = JSON.stringify(snapshot);
+
+  for (const inputs of script.slice(200, 320)) sim.step(inputs);
+  sim.load(snapshot);
+  check('戦闘メイドでも save/load で巻き戻せる', JSON.stringify(sim.save()) === expected);
+
+  const replay = () => {
+    sim.load(snapshot);
+    for (const inputs of script.slice(200)) sim.step(inputs);
+    return JSON.stringify(sim.save());
+  };
+  check('戦闘メイドの巻き戻し後の再実行が一致する', replay() === replay());
 }
 
 // ── ダッシュビット ──────────────────────────────────────────
@@ -2778,6 +3416,19 @@ section('絵の対応');
       .map((m) => m.anim)
       .filter((name) => name && !anims[name]);
     check(`${def.name}の技の絵が揃っている`, moveAnims.length === 0, moveAnims.join(' '));
+
+    /**
+     * アニメ名で引く設定（表示倍率・前段コマ数・使うコマ範囲）の綴り確認。
+     * 打ち間違えても例外にはならず**黙って効かなくなる**だけなので、ここで拾う。
+     * animEntry はシートのコマ数に収まっているかも見る。
+     */
+    const keyed = { ...def.animScale, ...def.animEntry, ...def.animRanges, ...def.animFlip };
+    const unknown = Object.keys(keyed).filter((name) => !anims[name]);
+    check(`${def.name}のアニメ別設定が実在の絵を指している`, unknown.length === 0, unknown.join(' '));
+    const overrun = Object.entries(def.animEntry ?? {})
+      .filter(([name, n]) => anims[name] && n >= anims[name].frames)
+      .map(([name, n]) => `${name}:${n}/${anims[name].frames}`);
+    check(`${def.name}の前段コマ数がシートに収まっている`, overrun.length === 0, overrun.join(' '));
   }
 
   for (const id of EXTRA_SPRITE_IDS) {
