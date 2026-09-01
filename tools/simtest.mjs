@@ -18,7 +18,7 @@ import {
   GRAVITY,
 } from '../src/game/constants.js';
 import { getProjectileDef, lungeSlideTick } from '../src/game/projectiles.js';
-import { getCharacter } from '../src/game/characters/index.js';
+import { getCharacter, CHARACTER_IDS } from '../src/game/characters/index.js';
 // スワイプ操作は DOM を触らない部分だけ切り出してあるので、ここで検証できる
 import { GESTURE, SWIPE, SwipeTracker, classifySwipe } from '../src/core/gestures.js';
 import { InputManager } from '../src/core/input.js';
@@ -2256,6 +2256,470 @@ section('戦闘メイドの回転斬り');
   check('落とし切ると着地で終わる', p1.state === STATE.LAND, `state=${p1.state}`);
 }
 
+// ── 巫女 ────────────────────────────────────────────────────
+// 打撃をひとつも持たず、当てる手段は御札と、結界を弾いたときの欠片だけ。
+// 「スキルにだけ勝つ結界」が、スキル以外に何もしないことを確かめる。
+section('巫女の御札');
+{
+  const sim = newSim(['miko', 'swordsman']);
+  place(sim, 700, 1000);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.ATTACK);
+  check('攻撃で御札が出る', p1.moveId === 'talismanThrow', `move=${p1.moveId}`);
+  check('自分では打撃判定を持たない', p1.def.moves.talismanThrow.hits.length === 0);
+  run(sim, 14, 0);
+  const shot = sim.projectiles.find((q) => q.type === 'talisman');
+  check('御札が 1 枚だけ飛ぶ', sim.projectiles.length === 1, `n=${sim.projectiles.length}`);
+  check('軌道は一直線（上下に曲がらない）', shot && shot.vy === 0, `vy=${shot?.vy}`);
+  check('前へ飛ぶ', shot && shot.vx > 0, `vx=${shot?.vx}`);
+  run(sim, 30, 0);
+  check('御札は相手に当たる', sim.fighters[1].doomed, `state=${sim.fighters[1].state}`);
+}
+
+{
+  // 御札は胸の高さ（163）を飛ぶので、しゃがまれると下を通る。
+  // 女子高生のレーザーと同じ弱点で、同じ理由（絵の手元の高さ）から来ている
+  const sim = newSim(['miko', 'swordsman']);
+  place(sim, 700, 1000);
+  run(sim, CROUCH_TICKS + 2, 0, BTN.DOWN);
+  run(sim, 1, BTN.ATTACK, BTN.DOWN);
+  run(sim, 60, 0, BTN.DOWN);
+  check('しゃがめば御札の下をくぐれる', !sim.fighters[1].doomed,
+    `state=${sim.fighters[1].state}`);
+}
+
+section('巫女の散り札');
+{
+  const sim = newSim(['miko', 'swordsman']);
+  place(sim, 700, 1000);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 12, 0);
+  run(sim, 1, BTN.ATTACK);
+  check('空中攻撃で散り札が出る', p1.moveId === 'scatterTalisman', `move=${p1.moveId}`);
+  run(sim, 15, 0);
+  const fan = sim.projectiles.filter((q) => q.type === 'talismanFan');
+  check('御札が 3 枚出る', fan.length === 3, `n=${fan.length}`);
+
+  // 真ん中の 1 枚は相手へ一直線。残り 2 枚はその両側へ同じだけ開く。
+  // 狙い線と実際の向きのずれは、正規化した 2 本の外積で測れる
+  const foe = sim.fighters[1];
+  const hurt = foe.hurtBox();
+  const aimed = fan.map((q) => {
+    const dx = hurt.x + hurt.w / 2 - q.x;
+    const dy = hurt.y + hurt.h * 0.55 - q.y;
+    const len = Math.hypot(dx, dy) * Math.hypot(q.vx, q.vy);
+    return (dx * q.vy - dy * q.vx) / len;
+  });
+  aimed.sort((a, b) => a - b);
+  check('真ん中の 1 枚は相手へ一直線', Math.abs(aimed[1]) < 0.02, `ずれ=${aimed[1].toFixed(3)}`);
+  check('残り 2 枚は扇に開く', aimed[0] < -0.2 && aimed[2] > 0.2,
+    `${aimed[0].toFixed(2)} / ${aimed[2].toFixed(2)}`);
+  check('開きは左右対称', Math.abs(aimed[0] + aimed[2]) < 0.02,
+    `${aimed[0].toFixed(3)} + ${aimed[2].toFixed(3)}`);
+  check('3 枚とも相手の側へ飛ぶ', fan.every((q) => q.vx > 0),
+    fan.map((q) => q.vx.toFixed(1)).join());
+}
+
+{
+  // 跳び越したあとでも、投げる向きと絵の向きは揃う（turnInAir）。
+  // 御札は前方 124 の指先から出るので、真上を取ってしまうと
+  // 出た時点で相手を追い越していて向きが決まらない。少し離して置く
+  const sim = newSim(['miko', 'swordsman']);
+  place(sim, 1250, 900);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 12, 0);
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 15, 0);
+  const fan = sim.projectiles.filter((q) => q.type === 'talismanFan');
+  check('背中側の相手にも向き直って投げる', p1.facing === -1, `facing=${p1.facing}`);
+  check('御札も相手の側へ飛ぶ', fan.length === 3 && fan.every((q) => q.vx < 0),
+    fan.map((q) => q.vx.toFixed(1)).join());
+}
+
+section('巫女の結界');
+{
+  const miko = getCharacter('miko');
+  const ward = miko.moves.ward;
+  check('結界の返し先が定義されている', !!miko.moves[miko.wardCounter],
+    `counter=${miko.wardCounter}`);
+  check('結界そのものは判定を持たない', ward.hits.length === 0);
+  check('張り終わる前に技が終わらない', ward.ward.frame + ward.ward.ticks <= ward.total,
+    `${ward.ward.frame}+${ward.ward.ticks} > ${ward.total}`);
+
+  const sim = newSim(['miko', 'swordsman']);
+  place(sim, 800, 1400);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.SKILL);
+  check('スキルで結界が出る', p1.moveId === 'ward', `move=${p1.moveId}`);
+  run(sim, ward.ward.frame, 0);
+  check('張り切るまでは結界が無い', !p1.isWarding, `ticks=${p1.wardTicks}`);
+  run(sim, 1, 0);
+  check('両腕を開いたところで張られる', p1.wardTicks === ward.ward.ticks, `ticks=${p1.wardTicks}`);
+  run(sim, ward.ward.ticks, 0);
+  check('張っていられる時間で切れる', !p1.isWarding, `ticks=${p1.wardTicks}`);
+  run(sim, 20, 0);
+  check('結界が切れたあとは元に戻る', p1.state === STATE.IDLE, `state=${p1.state}`);
+}
+
+/** 結界を張り切ったところまで進めた試合を作る。 */
+function warded(foeId, x0 = 800, x1 = 960) {
+  const sim = newSim(['miko', foeId]);
+  place(sim, x0, x1);
+  run(sim, 1, BTN.SKILL, 0);
+  run(sim, getCharacter('miko').moves.ward.ward.frame + 1, 0, 0);
+  return sim;
+}
+
+{
+  // スキル（ガードを崩す技）は無効化され、そのまま返される
+  const sim = warded('swordsman');
+  const [p1, p2] = sim.fighters;
+  check('結界が張られている', p1.isWarding);
+  run(sim, 1, 0, BTN.SKILL);
+  for (let i = 0; i < 90 && !p2.doomed && !p1.doomed; i += 1) run(sim, 1, 0, 0);
+  check('スキルは巫女に通らない', p1.health === p1.maxHealth, `hp=${p1.health}`);
+  check('弾いたら返し技に移る', p1.moveId === 'wardBurst' || p2.doomed || p2.isKO,
+    `move=${p1.moveId}`);
+  check('結界の欠片が返って当たる', p2.doomed || p2.isKO, `state=${p2.state}`);
+}
+
+{
+  // 掴みもスキルなので弾く（跳んで逃げるのとは別の答えになる）
+  const sim = warded('succubus', 850, 940);
+  const [p1, p2] = sim.fighters;
+  run(sim, 1, 0, BTN.SKILL);
+  for (let i = 0; i < 90 && !p2.doomed && !p1.doomed; i += 1) run(sim, 1, 0, 0);
+  check('掴みも結界が弾く', p1.health === p1.maxHealth && p1.state !== STATE.GRABBED,
+    `hp=${p1.health} state=${p1.state}`);
+  check('掴みを弾いても欠片が返る', p2.doomed || p2.isKO, `state=${p2.state}`);
+}
+
+{
+  // スキルの飛び道具（彼氏）も弾く。走り抜ける弾でもそこで砕ける。
+  //
+  // 結界は 40 ティックしか保たないので、呼ばれた瞬間に張っても
+  // 走ってくる前に切れる。**届く直前に張る**のがこの技の使い方になる
+  const sim = newSim(['miko', 'schoolgirl']);
+  place(sim, 700, 1250);
+  const [p1] = sim.fighters;
+  run(sim, 1, 0, BTN.SKILL);
+  for (let i = 0; i < 200; i += 1) {
+    const bf = sim.projectiles.find((q) => q.type === 'boyfriend');
+    if (bf && Math.abs(bf.x - p1.x) < 260) break;
+    run(sim, 1, 0, 0);
+  }
+  run(sim, 1, BTN.SKILL, 0);
+  for (let i = 0; i < 120 && !p1.doomed; i += 1) run(sim, 1, 0, 0);
+  check('スキルの飛び道具も弾く', p1.health === p1.maxHealth, `hp=${p1.health}`);
+  check('弾いた飛び道具は消える', !sim.projectiles.some((q) => q.type === 'boyfriend'),
+    sim.projectiles.map((q) => q.type).join());
+}
+
+{
+  // 打撃には何もしない。結界を張ったまま殴られれば普通に死ぬ
+  const sim = warded('swordsman', 800, 900);
+  const [p1] = sim.fighters;
+  run(sim, 1, 0, BTN.ATTACK);
+  run(sim, 40, 0, 0);
+  check('打撃は結界を素通しする', p1.doomed || p1.isKO, `state=${p1.state}`);
+}
+
+{
+  // 普通の飛び道具（スキルではない弾）も素通し
+  const sim = warded('mage', 800, 1200);
+  const [p1] = sim.fighters;
+  run(sim, 1, 0, BTN.ATTACK);
+  for (let i = 0; i < 120 && !p1.doomed; i += 1) run(sim, 1, 0, 0);
+  check('普通の弾は結界を素通しする', p1.doomed, `state=${p1.state}`);
+}
+
+{
+  // 何度も当たるスキル（照射）は、1 発目で返してあとは弾き続ける。
+  // 当たるたびに返し技を出し直すと、モーションが頭へ戻って何も返せない
+  const sim = newSim(['miko', 'mage']);
+  place(sim, 800, 1150);
+  const [p1, p2] = sim.fighters;
+  run(sim, 1, 0, BTN.SKILL);      // 溜め（60 ティック）に入る
+  run(sim, 46, 0, 0);
+  run(sim, 1, BTN.SKILL, 0);      // 照射に間に合うように結界を張る
+  for (let i = 0; i < 200 && !p1.doomed && !p2.doomed; i += 1) run(sim, 1, 0, 0);
+  check('照射をまるごと弾き切る', !p1.doomed, `state=${p1.state} hp=${p1.health}`);
+  check('弾き返した欠片が当たる', p2.doomed || p2.isKO, `state=${p2.state}`);
+}
+
+section('巫女の踏み降り');
+{
+  const sim = newSim(['miko', 'swordsman']);
+  place(sim, 800, 1400);
+  const p1 = sim.fighters[0];
+  check('踏み降りは判定を持たない', p1.def.moves.stomp.hits.length === 0);
+  run(sim, 1, BTN.UP);
+  run(sim, 16, 0);
+  const y0 = p1.y;
+  run(sim, 1, BTN.SKILL);
+  check('空中スキルで踏み降りが出る', p1.moveId === 'stomp', `move=${p1.moveId}`);
+  run(sim, 5, 0);
+  check('出した時点から落ちる', p1.y < y0 - 40, `y=${p1.y.toFixed(0)} (from ${y0.toFixed(0)})`);
+  for (let i = 0; i < 60 && p1.y > 0; i += 1) run(sim, 1, 0);
+  check('自然に落ちるより速く着く', p1.y === 0, `y=${p1.y.toFixed(1)}`);
+  check('着地硬直に入る', p1.state === STATE.LAND, `state=${p1.state}`);
+  check('外したときの硬直は技データ通り', p1.landLag === p1.def.moves.stomp.landLag,
+    `landLag=${p1.landLag}`);
+}
+
+// ── 格闘娘 ──────────────────────────────────────────────────
+// このキャラだけ「技の並び」が固定されていない。どの技も、判定が出たフレームから
+// 技の最後まで次の技を受け付ける（chains）ので、繋がることそのものを確かめておく。
+section('格闘娘の連打');
+{
+  const sim = newSim(['brawler', 'swordsman']);
+  place(sim, 800, 900);
+  const [p1, p2] = sim.fighters;
+
+  run(sim, 1, BTN.ATTACK);
+  check('攻撃で刻み突きが出る', p1.moveId === 'punch1', `move=${p1.moveId}`);
+  run(sim, 7, 0);
+  check('発生 6 で当たる', p1.comboDisplay === 1, `hits=${p1.comboDisplay} f=${p1.moveFrame}`);
+
+  // 当てた手応え（ヒットストップ 4）の最中に押しても間に合う。
+  // 先行入力が 6 ティックあるので、明けた次のフレームで繋がる
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 6, 0);
+  check('攻撃でキャンセルして打ち抜きへ', p1.moveId === 'punch2', `move=${p1.moveId}`);
+  run(sim, 8, 0);
+  check('2 発目も繋がる', p1.comboDisplay === 2, `hits=${p1.comboDisplay}`);
+
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 12, 0);
+  check('打ち抜きから 3 打目の刻み突きへ', p1.moveId === 'punch3', `move=${p1.moveId}`);
+  check('3 発目も繋がる', p1.comboDisplay === 3, `hits=${p1.comboDisplay}`);
+  check('繋いでいる間は相手がのけぞったまま', p2.state === STATE.HIT, `state=${p2.state}`);
+}
+
+{
+  // 4 打目だけが波動弾を撃つ。撃つには 3 発ぶん振り切る必要がある。
+  // 当たると硬直で間が変わるので、届かない間合いで打数だけを数える。
+  const sim = newSim(['brawler', 'swordsman']);
+  place(sim, 500, 1500);
+  const p1 = sim.fighters[0];
+  const blasts = () => sim.projectiles.filter((q) => q.type === 'kiBlast').length;
+  const order = [];
+  for (let i = 0; i < 4; i += 1) {
+    run(sim, 1, BTN.ATTACK);
+    run(sim, 12, 0);
+    order.push(p1.moveId);
+    if (i < 3) check(`${i + 1} 打目までは波動弾が出ない`, blasts() === 0, `n=${blasts()}`);
+  }
+  check('4 打で 刻み → 打ち抜き → 刻み → 波動突き と回る',
+    order.join(' ') === 'punch1 punch2 punch3 punch4', order.join(' '));
+  check('4 打目で波動弾が出る', blasts() === 1, `n=${blasts()}`);
+  check('波動弾は前へ飛ぶ', sim.projectiles[0].vx > 0, `vx=${sim.projectiles[0].vx}`);
+
+  // 5 打目はまた 1 打目。ここから数え直しになる
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 12, 0);
+  check('5 打目は 1 打目に戻る', p1.moveId === 'punch1', `move=${p1.moveId}`);
+  check('場に出せる波動弾は 1 発', blasts() <= 1, `n=${blasts()}`);
+}
+
+{
+  // 連打を切ると数え直し。3 発振り切らないと波動弾は出ない
+  const sim = newSim(['brawler', 'swordsman']);
+  place(sim, 500, 1500);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 12, 0);
+  run(sim, 1, BTN.ATTACK);   // ここまで 2 打
+  run(sim, 30, 0);           // 手を止めて技を出し切る
+  check('連打を切ると待機に戻る', p1.state === STATE.IDLE, `state=${p1.state}`);
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 2, 0);
+  check('振り直しは 1 打目から', p1.moveId === 'punch1', `move=${p1.moveId}`);
+}
+
+{
+  // 波動弾は肩の高さを飛ぶ。しゃがまれると下を通る
+  // （巫女の御札・女子高生のレーザーと同じ弱点）
+  const sim = newSim(['brawler', 'swordsman']);
+  place(sim, 500, 900);
+  const [p1, p2] = sim.fighters;
+  for (let i = 0; i < 4; i += 1) {
+    run(sim, 1, BTN.ATTACK, BTN.DOWN);
+    run(sim, 12, 0, BTN.DOWN);
+  }
+  check('しゃがんで待つ', p2.state === STATE.CROUCH, `state=${p2.state}`);
+  const shot = sim.projectiles.find((q) => q.type === 'kiBlast');
+  check('波動弾が飛んでいる', !!shot);
+  for (let i = 0; i < 60 && sim.projectiles.length > 0; i += 1) run(sim, 1, 0, BTN.DOWN);
+  check('しゃがんだ相手の上を通り抜ける', p2.health === p2.maxHealth, `hp=${p2.health}`);
+}
+
+{
+  // 判定が出る前には繋げない。ここで繋がると「出しかけた技を無かったことにする」
+  // ボタンになる。判定と同じフレームにも開けていない（そこに置くと、先行入力が
+  // 入っているときに自分の攻撃判定を飛び越してキャンセルしてしまう）。
+  const sim = newSim(['brawler', 'swordsman']);
+  place(sim, 800, 900);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 3, 0);
+  run(sim, 1, BTN.ATTACK);   // 3 フレーム目 = 判定より前
+  run(sim, 2, 0);
+  check('判定が出る前は繋げない', p1.moveId === 'punch1', `move=${p1.moveId} f=${p1.moveFrame}`);
+  run(sim, 1, 0);            // 6 フレーム目 = 判定
+  check('先行入力が残っていても自分の判定は飛ばさない', p1.comboDisplay === 1,
+    `hits=${p1.comboDisplay} move=${p1.moveId} f=${p1.moveFrame}`);
+}
+
+{
+  // リーチはこのゲームで最も短い。短いことは設計そのものなので、
+  // 判定を広げたときに気づけるよう他の全キャラと比べておく。
+  const { profileOf } = await import('../src/game/ai.js');
+  const me = profileOf(getCharacter('brawler')).attack;
+  const others = CHARACTER_IDS.filter((id) => id !== 'brawler').map((id) => ({
+    id,
+    range: profileOf(getCharacter(id)).attack.range,
+    startup: profileOf(getCharacter(id)).attack.startup,
+  }));
+  const shortest = others.reduce((a, b) => (b.range < a.range ? b : a));
+  const fastest = others.reduce((a, b) => (b.startup < a.startup ? b : a));
+  check('攻撃のリーチが全キャラで最短', me.range < shortest.range,
+    `格闘娘 ${me.range} / 次に短いのは ${shortest.id} ${shortest.range}`);
+  check('そのかわり発生が全キャラで最速', me.startup < fastest.startup,
+    `格闘娘 ${me.startup} / 次に速いのは ${fastest.id} ${fastest.startup}`);
+}
+
+{
+  // ガードさせ続けても固め切れない。押し出し（pushBlock）で自分から間合いが切れる。
+  // 当てているときは押さない（pushHit 0.9）ので、通っている間だけ近いままになる。
+  const sim = newSim(['brawler', 'swordsman']);
+  place(sim, 800, 900);
+  const [p1, p2] = sim.fighters;
+  const gap0 = p2.x - p1.x;
+  // 攻撃は押した瞬間だけを拾うので、押し直しを繰り返す。
+  // 間隔は「判定が出て（6〜8）、ヒットストップが明けて（4〜5）から繋ぐ」ぶん
+  for (let i = 0; i < 8; i += 1) {
+    run(sim, 1, BTN.ATTACK, BTN.GUARD);
+    run(sim, 13, 0, BTN.GUARD);
+  }
+  check('ガードは通る', p2.health === p2.maxHealth, `hp=${p2.health}`);
+  check('固めるほど間合いが開く', p2.x - p1.x > gap0 + 40,
+    `${gap0.toFixed(0)} -> ${(p2.x - p1.x).toFixed(0)}`);
+  const box = getCharacter('brawler').moves.punch2.hits[0].box;
+  check('やがて自分のリーチの外へ出る', p2.x - p1.x > box.x + box.w + 38,
+    `間合い ${(p2.x - p1.x).toFixed(0)} / 実効射程 ${box.x + box.w + 38}`);
+}
+
+section('格闘娘のサマーソルト');
+{
+  const sim = newSim(['brawler', 'swordsman']);
+  // 押し合い判定（PUSHBOX_W = 86）に触れない間合い。触れていると
+  // 技とは関係なく左右に押し離されて、「真上へ跳ぶ」が測れない
+  place(sim, 800, 920);
+  const [p1, p2] = sim.fighters;
+  const x0 = p1.x;
+  run(sim, 1, BTN.SKILL);
+  check('スキルでサマーソルトが出る', p1.moveId === 'somersault', `move=${p1.moveId}`);
+  let peak = 0;
+  for (let i = 0; i < 40; i += 1) {
+    run(sim, 1, 0);
+    peak = Math.max(peak, p1.y);
+  }
+  // 跳ぶ技ではなく蹴り上げがそのまま上昇になる技なので、ジャンプ（202）より上へ行く。
+  // 代償は空中にいる時間（全体 58 ＝ 1 秒近く引き返せない）
+  check('蹴り上げながら跳び上がる', peak > 202, `peak=${peak.toFixed(0)} / ジャンプ 202`);
+  check('跳びっぱなしにはならない', getCharacter('brawler').moves.somersault.total === 58,
+    `total=${getCharacter('brawler').moves.somersault.total}`);
+  check('真上へ跳ぶ（前へ流れない）', Math.abs(p1.x - x0) < 2, `dx=${(p1.x - x0).toFixed(1)}`);
+  check('当たる', p1.comboDisplay >= 1, `hits=${p1.comboDisplay}`);
+  check('ガードごと崩す', p2.health === 0, `hp=${p2.health}`);
+  // ダウンさせない。ダウンした相手は無敵になり、追撃が一発も入らなくなる
+  check('相手を浮かせる', p2.y > 0, `y=${p2.y.toFixed(1)}`);
+  check('浮かせるだけでダウンはさせない', p2.state === STATE.HIT, `state=${p2.state}`);
+}
+
+{
+  // 地上の連打 → サマーソルト → 空中技、という繋ぎがこのキャラの本線。
+  // 途中で相手が硬直から抜けたら（コンボが途切れたら）その場で崩れ落ちるので、
+  // 最後まで STATE.HIT のままなら 1 本のコンボとして繋がっている。
+  const sim = newSim(['brawler', 'swordsman']);
+  place(sim, 800, 900);
+  const [p1, p2] = sim.fighters;
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 7, 0);            // 刻み突きが当たる
+  run(sim, 1, BTN.ATTACK);   // 刻み突き → 打ち抜き
+  run(sim, 18, 0);           // 打ち抜きが当たる
+  run(sim, 1, BTN.SKILL);    // 打ち抜き → サマーソルト
+  run(sim, 16, 0);
+  check('連打からサマーソルトへ繋がる', p1.moveId === 'somersault', `move=${p1.moveId}`);
+  check('浮かせるところまで 3 ヒット', p1.comboDisplay === 3, `hits=${p1.comboDisplay}`);
+  run(sim, 1, BTN.ATTACK);   // サマーソルト → 飛び蹴り（空中）
+  run(sim, 2, 0);
+  check('跳んだ勢いのまま空中攻撃へ繋がる', p1.moveId === 'jumpKick' && p1.y > 0,
+    `move=${p1.moveId} y=${p1.y.toFixed(0)}`);
+  for (let i = 0; i < 14; i += 1) run(sim, 1, 0);
+  check('浮いた相手に空中攻撃が届く', p1.comboDisplay === 4, `hits=${p1.comboDisplay}`);
+  check('4 発目まで繋がっている', p2.state === STATE.HIT, `state=${p2.state}`);
+}
+
+section('格闘娘の回転かかと落とし');
+{
+  const sim = newSim(['brawler', 'swordsman']);
+  place(sim, 860, 900);
+  const [p1, p2] = sim.fighters;
+  run(sim, 1, BTN.UP);
+  run(sim, 14, 0);
+  const y0 = p1.y;
+  run(sim, 1, BTN.SKILL);
+  check('空中スキルで回転が出る', p1.moveId === 'heelSpin', `move=${p1.moveId}`);
+  run(sim, 3, 0);
+  check('真下へ落ちる', p1.y < y0 - 20, `y=${p1.y.toFixed(0)} (from ${y0.toFixed(0)})`);
+  for (let i = 0; i < 40 && p1.moveId === 'heelSpin'; i += 1) run(sim, 1, 0);
+  check('当たった瞬間にかかと落としへ移る', p1.moveId === 'heelDrop', `move=${p1.moveId}`);
+  for (let i = 0; i < 60 && p1.state === STATE.MOVE; i += 1) run(sim, 1, 0);
+  check('回転とかかとで 2 ヒットする', p1.comboDisplay === 2, `hits=${p1.comboDisplay}`);
+  check('締めはダウンを奪う', p2.state === STATE.DOWN || p2.isKO, `state=${p2.state}`);
+}
+
+{
+  // 当たらないまま着地したら「普通に着地する」。急降下技のような重い硬直は付けない
+  const sim = newSim(['brawler', 'swordsman']);
+  place(sim, 300, 1500);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 14, 0);
+  run(sim, 1, BTN.SKILL);
+  for (let i = 0; i < 80 && p1.y > 0; i += 1) run(sim, 1, 0);
+  check('外したら着地で技が切れる', p1.state === STATE.LAND, `state=${p1.state}`);
+  check('外しても着地硬直は普通のまま', p1.landLag === 7, `landLag=${p1.landLag}`);
+  check('回転そのものに着地硬直の指定は無い',
+    getCharacter('brawler').moves.heelSpin.landLag === null);
+}
+
+{
+  // 2 段目。回っている最中にもう一度スキルで、高さを保ったまま真横へ蹴り抜く
+  const sim = newSim(['brawler', 'swordsman']);
+  place(sim, 300, 1500);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP | BTN.RIGHT);
+  run(sim, 14, BTN.RIGHT);
+  run(sim, 1, BTN.SKILL);
+  run(sim, 5, 0);
+  run(sim, 1, BTN.SKILL);
+  run(sim, 1, 0);
+  check('回転中のスキルで飛び足刀へ繋がる', p1.moveId === 'flyKick', `move=${p1.moveId}`);
+  // 高さと横移動は、飛び足刀に入ってからの変化で測る
+  // （回転は落ちる技なので、繋ぐ前の高さと比べると落差ぶんが混ざる）
+  const y0 = p1.y;
+  const x0 = p1.x;
+  run(sim, 14, 0);
+  check('高さを保つ', Math.abs(p1.y - y0) < 2, `y ${y0.toFixed(0)} -> ${p1.y.toFixed(0)}`);
+  // 走り（7.4）より速い。19 ティックで 200 以上抜ける
+  check('真横へ速く飛ぶ', p1.x - x0 > 150, `dx=${(p1.x - x0).toFixed(0)}`);
+}
+
 // ── 空中攻撃 ────────────────────────────────────────────────
 section('空中攻撃');
 for (const [id, attack, skill] of [
@@ -2265,6 +2729,8 @@ for (const [id, attack, skill] of [
   ['cavalier', 'boostSlash', 'drillDash'],
   ['ninja', 'caltrops', 'tornado'],
   ['maid', 'spinSlash', 'aetherSlam'],
+  ['miko', 'scatterTalisman', 'stomp'],
+  ['brawler', 'jumpKick', 'heelSpin'],
 ]) {
   const sim = newSim([id, 'swordsman']);
   const p1 = sim.fighters[0];

@@ -13,6 +13,8 @@ import succubus from './succubus.js';
 import cavalier from './cavalier.js';
 import ninja from './ninja.js';
 import maid from './maid.js';
+import miko from './miko.js';
+import brawler from './brawler.js';
 
 export const ROSTER = [
   swordsman,
@@ -23,6 +25,8 @@ export const ROSTER = [
   cavalier,
   ninja,
   maid,
+  miko,
+  brawler,
 ];
 
 /**

@@ -172,7 +172,10 @@ export class CharacterSelect {
     this.dom.info.innerHTML =
       `<b>${def.name}</b> — ${def.subtitle}<br>` +
       `攻撃: ${attack.label}${chain ? `（続けて攻撃で「${chain.label}」）` : ''}<br>` +
-      `スキル: ${skill.label}（ガードを崩す / 隙が大きい）` +
+      // スキルの但し書きはキャラ側で差し替えられる。
+      // 「ガードを崩す」は全キャラに当てはまるものとして書いてあったが、
+      // 巫女の結界のように**崩すのではなく弾く**スキルもあるため
+      `スキル: ${skill.label}（${def.skillNote ?? 'ガードを崩す / 隙が大きい'}）` +
       (airAttack && airSkill
         ? `<br>空中: ${airAttack.label} / ${airSkill.label}`
         : '');

@@ -203,6 +203,53 @@ $CONFIG = @(
     )
   },
   @{
+    # 巫女。待機から結界まで 14 行全部が 1 枚のシートに乗っているので、
+    # 行どうしの高さを合わせる必要はない（シート側で足元 y を揃えて撮ってある）。
+    #
+    # anchorMetric は 'body'。引きずる刀も提げる包丁も無く、
+    # 御札を持つ手が前へ伸びるだけなので、シルエットの中央値がそのまま立ち位置になる。
+    id = 'miko'; targetHeight = 204; anchorMetric = 'body'
+    sheets = @(
+      # 投げの 2 行は attack2 / airattack2（＝ attack / airattack から**投げ手の御札だけを
+      # 消した版**）を使う。御札はゲーム側が projectiles として出しているので、
+      # 手に持ったまま飛ばすと投げた瞬間に御札が 2 枚に見える。
+      # 元の attack / airattack はシートに残っているが、アトラスには入れない。
+      #
+      # airattack2 だけは**空中で跳んだまま撮った行**で、他の 13 行より
+      # 足が 53 ワールド単位ぶん高いところに描かれている（爪先を下ろしていない）。
+      # そのままだと投げた瞬間に本人だけがふわりと浮き上がるので、
+      # アンカーを同じだけ下げて、足元がやられ判定の底に来るようにしてある。
+      @{ file = 'miko'; ref = 'idle'; dx = 0; dy = 0
+         skip = @('attack', 'airattack')
+         nudge = @{ airattack2 = @{ y = -53 } } }
+    )
+  },
+  @{
+    # 格闘娘。待機からサマーソルトまで 17 行全部が 1 枚のシートに乗っている。
+    #
+    # anchorMetric は 'body'。武器を持たないので、シルエットの中央値が
+    # そのまま立ち位置になる（巫女と同じ理由）。
+    id = 'brawler'; targetHeight = 202; anchorMetric = 'body'
+    sheets = @(
+      # jumpkick / flykick は**空中で撮った行**で、他の行より体が高い位置に描かれている
+      # （jumpkick は後ろ脚を体の下へたたむので足元が 88、flykick は蹴りコマを
+      #  shifty で 72px 持ち上げてあるので 31 ぶん浮く）。そのままだと、跳んで
+      # 攻撃した瞬間に本人だけがさらに浮き上がり、伸ばした足がやられ判定より
+      # ずっと上に描かれる。立ち姿と同じ胴体の位置に来るようアンカーを下げる
+      # （巫女の airattack2 と同じ直し方。ずらすのはアンカーだけなので絵は欠けない）。
+      #
+      # jump / fall / land を直していないのは、あの 3 行が**跳躍の弧そのもの**を
+      # 撮った行だから。持ち上がりは絵の一部で、全キャラ同じ扱いにしてある。
+      # flipheel / somersault も直さない。回転コマは浮くが、判定を持つコマ
+      # （かかと落としの振り下ろし・蹴り上げ）はどちらも接地の高さに描かれている。
+      @{ file = 'kakutou2'; ref = 'idle'; dx = 0; dy = 0
+         nudge = @{
+           jumpkick = @{ y = -44 }
+           flykick  = @{ y = -45 }
+         } }
+    )
+  },
+  @{
     # Not a playable character: the boyfriend the schoolgirl's skill summons.
     # Built as its own atlas so the renderer can draw him like any other sprite.
     id = 'boyfriend'; targetHeight = 215; anchorMetric = 'body'

@@ -343,6 +343,9 @@ export class Renderer {
       this._drawGuardWall(f);
     }
 
+    // 結界。張っている間だけ体を包む（巫女のスキル）
+    if (f.isWarding) this._drawWard(f);
+
     if (veil < 1) ctx.restore();
 
     if (twist > 0.02) this._drawTornado(f, twist, true);
@@ -864,6 +867,96 @@ export class Renderer {
     ctx.restore();
   }
 
+  /**
+   * 結界。巫女がスキルを張っている間、体を包む球として出る。
+   *
+   * ── 何を伝えたいか ──────────────────────────────────────────
+   * この技は**相手のスキルにしか効かない**。つまり相手にとっては
+   * 「今スキルを振ってはいけない」という合図そのものなので、
+   * 張られていることと、**いつ切れるか**が離れていても読めなければならない。
+   *
+   * | | やっていること | これが無いと |
+   * |---|---|---|
+   * | 球として描く | 体を包む円を 1 つ。前だけの壁にしない | ガードの光壁と見分けが付かない |
+   * | 御札を回す | 8 枚を円周に立てて、ゆっくり回す | ただの光の輪＝何の技か伝わらない |
+   * | 消える手前で薄れる | 残り 14 ティックから薄くする | 切れた瞬間が分からず、振り得になる |
+   * | 位相を残りティックから作る | `wardTicks` を角度に使う | リプレイのたびに違う絵になる |
+   *
+   * 描画専用なので、判定はいっさいここを見ない
+   * （結界が弾くかどうかは fighter.js の wardRepels が決める）。
+   */
+  _drawWard(f) {
+    const cam = this.cam;
+    const ctx = this.ctx;
+    const aura = f.def.wardAura ?? { y: 108, radius: 130, color: '#ff6a86' };
+    const z = cam.zoom;
+    const cx = cam.toScreenX(f.x);
+    const cy = cam.toScreenY(f.y + aura.y);
+    const rgb = hexToRgb(aura.color);
+
+    // 息づかい。完全に静止した円は板に見える
+    const pulse = 1 + Math.sin(f.wardTicks * 0.24) * 0.028;
+    const r = aura.radius * z * pulse;
+    // 切れる手前は薄れていく。相手に「もうすぐ振れる」を見せるための猶予
+    const fade = Math.min(1, f.wardTicks / 14);
+    // 回転の位相はシミュレーション側の残りティックから作る（リプレイ再現のため）
+    const spin = -f.wardTicks * 0.026;
+
+    ctx.save();
+
+    // 1) 中身の光。中心は空けて、縁へ向かって濃くする。
+    //    中心まで塗ると本人が霞んで、何をしているのか見えなくなる
+    ctx.globalCompositeOperation = 'lighter';
+    const glow = ctx.createRadialGradient(cx, cy, r * 0.35, cx, cy, r);
+    glow.addColorStop(0, `rgba(${rgb},0)`);
+    glow.addColorStop(0.72, `rgba(${rgb},0.10)`);
+    glow.addColorStop(0.97, `rgba(${rgb},0.34)`);
+    glow.addColorStop(1, `rgba(${rgb},0)`);
+    ctx.globalAlpha = fade;
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 2) 外周。結界の面がどこにあるかはこの 1 本で決まる
+    ctx.globalAlpha = fade * 0.85;
+    ctx.strokeStyle = `rgba(${rgb},0.95)`;
+    ctx.lineWidth = 2.4 * z;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 3) 内側の輪。逆向きに回して、球が回っていることを見せる
+    ctx.globalAlpha = fade * 0.4;
+    ctx.lineWidth = 1.2 * z;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r * 0.84, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 4) 円周に立てた御札。**この技が結界だと分かるのはここだけ**なので、
+    //    加算ではなく普通に重ねて、紙として白く出す
+    ctx.globalCompositeOperation = 'source-over';
+    const paperL = 26 * z;
+    const paperW = 9 * z;
+    for (let i = 0; i < 8; i += 1) {
+      const a = spin + (i / 8) * Math.PI * 2;
+      // 奥側（上半分）は少し薄く。球に貼り付いていることが出る
+      const depth = 0.55 + 0.45 * (Math.sin(a) * 0.5 + 0.5);
+      ctx.save();
+      ctx.translate(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+      ctx.rotate(a + Math.PI / 2);
+      ctx.globalAlpha = fade * depth;
+      ctx.fillStyle = '#fff6f4';
+      ctx.fillRect(-paperW / 2, -paperL / 2, paperW, paperL);
+      ctx.fillStyle = `rgba(${rgb},0.9)`;
+      ctx.fillRect(-paperW / 2, -paperL / 2, paperW, 2 * z);
+      ctx.fillRect(-paperW * 0.18, -paperL * 0.28, paperW * 0.36, paperL * 0.5);
+      ctx.restore();
+    }
+
+    ctx.restore();
+  }
+
   _drawProjectile(p, sim) {
     const def = getProjectileDef(p.type);
     if (def.style === 'sprite') {
@@ -876,6 +969,18 @@ export class Renderer {
     }
     if (def.style === 'caltrop') {
       this._drawCaltrop(p, def);
+      return;
+    }
+    if (def.style === 'ofuda') {
+      this._drawOfuda(p, def);
+      return;
+    }
+    if (def.style === 'shard') {
+      this._drawShard(p, def);
+      return;
+    }
+    if (def.style === 'wave') {
+      this._drawWave(p, def);
       return;
     }
     const cam = this.cam;
@@ -1101,6 +1206,235 @@ export class Renderer {
       body(angles(spin), 1);
       ctx.restore();
     }
+    ctx.restore();
+  }
+
+  /**
+   * 御札。飛ぶ向きへ紙を寝かせて、少しはためかせながら走らせる。
+   *
+   * | | やっていること | これが無いと |
+   * |---|---|---|
+   * | 進む向きに合わせる | 速度から角度を出して回す | 斜めに飛んでいるのに札は水平のまま |
+   * | 紙をはためかせる | 経過フレームで縦の縮尺を波打たせる | 板が滑っているように見える |
+   * | 赤い印を入れる | 白い紙に縁と朱印を 3 枚重ねる | ただの白い長方形＝弾に見えない |
+   * | 光の尾を引く | 後ろへ伸ばした加算のグラデーション | 止まって見え、速さが伝わらない |
+   *
+   * 紙そのものは光らないので、**尾だけ加算・本体は普通に重ねる**。
+   * 全部光らせると白飛びして朱印が消え、御札に見えなくなる。
+   */
+  _drawOfuda(p, def) {
+    const cam = this.cam;
+    const ctx = this.ctx;
+    const z = cam.zoom;
+    const angle = Math.atan2(-p.vy, p.vx);
+    const rgb = hexToRgb('#e8425e');
+
+    // 紙の寸法。判定（54x26）より一回り小さい
+    const L = 44 * z;
+    const W = 16 * z;
+    // はためき。縦だけ縮めるので、紙が翻って見える
+    const flap = 0.72 + 0.28 * Math.abs(Math.sin(p.age * 0.42));
+
+    ctx.save();
+    ctx.translate(cam.toScreenX(p.x), cam.toScreenY(p.y));
+    ctx.rotate(angle);
+
+    // 尾。出た直後は短く、走るほど伸びる（発射点より後ろへは伸ばさない）
+    const speed = Math.hypot(p.vx, p.vy) || 1;
+    const tail = Math.min(speed * 4.6 * z, Math.max(0, p.age * speed * z - L * 0.5));
+    if (tail > 1) {
+      ctx.globalCompositeOperation = 'lighter';
+      const g = ctx.createLinearGradient(-tail, 0, 0, 0);
+      g.addColorStop(0, `rgba(${rgb},0)`);
+      g.addColorStop(1, `rgba(255,236,238,0.55)`);
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(-tail, 0);
+      ctx.lineTo(0, -W * 0.42);
+      ctx.lineTo(0, W * 0.42);
+      ctx.closePath();
+      ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+    }
+
+    // 紙本体
+    const w = W * flap;
+    ctx.fillStyle = '#fffaf7';
+    ctx.fillRect(-L / 2, -w / 2, L, w);
+    // 縁と朱印。前後の端に帯、真ん中に印
+    ctx.fillStyle = `rgba(${rgb},0.92)`;
+    ctx.fillRect(L / 2 - 3 * z, -w / 2, 3 * z, w);
+    ctx.fillRect(-L / 2, -w / 2, 2 * z, w);
+    ctx.fillRect(-L * 0.1, -w * 0.3, L * 0.24, w * 0.6);
+    // 走っている先の縁だけ光らせて、進行方向を出す
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = '#ffd9de';
+    ctx.fillRect(L / 2 - 2 * z, -w / 2, 2 * z, w);
+
+    ctx.restore();
+  }
+
+  /**
+   * 結界の欠片。割れた結界がそのまま飛んでいくものなので、
+   * **結界と同じ色・同じ質感**で描く（別物に見えると返し技だと伝わらない）。
+   *
+   * 尖った四角錐を回しながら飛ばし、後ろに残像を 2 枚置く。
+   * 欠片は光っているものなので、こちらは本体ごと加算で描く。
+   */
+  _drawShard(p, def) {
+    const cam = this.cam;
+    const ctx = this.ctx;
+    const z = cam.zoom;
+    const rgb = hexToRgb(def.color);
+    const sx = cam.toScreenX(p.x);
+    const sy = cam.toScreenY(p.y);
+    const angle = Math.atan2(-p.vy, p.vx);
+    const r = def.radius * z;
+
+    /** 欠片ひとつ。原点は中心で、進む向きへ尖らせてある。 */
+    const piece = (alpha, scale, spin) => {
+      ctx.save();
+      ctx.rotate(spin);
+      ctx.globalAlpha = alpha;
+      const g = ctx.createLinearGradient(-r * scale, 0, r * 1.5 * scale, 0);
+      g.addColorStop(0, `rgba(${rgb},0.15)`);
+      g.addColorStop(0.5, `rgba(${rgb},0.85)`);
+      g.addColorStop(1, 'rgba(255,255,255,0.95)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(r * 1.5 * scale, 0);
+      ctx.lineTo(0, -r * 0.62 * scale);
+      ctx.lineTo(-r * 0.9 * scale, 0);
+      ctx.lineTo(0, r * 0.62 * scale);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    };
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+
+    // 周りの光。欠片そのものは細いので、これが無いと画面で見失う
+    const halo = ctx.createRadialGradient(sx, sy, 0, sx, sy, r * 2.2);
+    halo.addColorStop(0, `rgba(${rgb},0.55)`);
+    halo.addColorStop(1, `rgba(${rgb},0)`);
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(sx, sy, r * 2.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 通ってきた位置の残像。速さがそのまま尾の長さになる
+    for (const k of [2.2, 1.1]) {
+      ctx.save();
+      ctx.translate(sx - p.vx * k * z, sy + p.vy * k * z);
+      ctx.rotate(angle);
+      piece(0.18, 0.85, p.age * 0.3 - k * 0.3);
+      ctx.restore();
+    }
+
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(angle);
+    piece(0.95, 1, p.age * 0.3);
+    ctx.restore();
+
+    ctx.restore();
+  }
+
+  /**
+   * 波動弾。格闘娘が連打の 4 打目で撃つ、素手から出る気の塊。
+   *
+   * 魔法使いのホーミング弾（既定の `orb`）と同じ「光る球」だが、
+   * **別のものに見えないと困る**。あちらは杖から出る魔法で、こちらは
+   * 拳から出る気なので、球そのものより**押し出された空気**を描く。
+   *
+   * | | やっていること | これが無いと |
+   * |---|---|---|
+   * | 進む向きへ引き伸ばす | 進行方向に 1.5 倍、直交方向に 0.8 倍へ潰す | 真円＝ただの光の玉に見える |
+   * | 芯を白く飛ばす | 中心 3 割を白、外を色、縁を透明にした放射グラデ | 塗り潰した円＝平らに見える |
+   * | 輪を 2 枚回す | 球を巻く楕円を、位相をずらして回す | 気が渦を巻いている感じが出ない |
+   * | 後ろへ尾を引く | 速度の後方へ細くなる三角の尾 | 止まって見える（速度が絵に出ない） |
+   * | 気の筋を散らす | 尾の中に短い線を 3 本、age で位相を送る | 尾がのっぺりして煙に見える |
+   *
+   * 光っているものなので全部加算合成で描く。血しぶきや煙とは逆の判断
+   * （あちらは光らないので `source-over`）。
+   */
+  _drawWave(p, def) {
+    const cam = this.cam;
+    const ctx = this.ctx;
+    const z = cam.zoom;
+    const rgb = hexToRgb(def.color);
+    const sx = cam.toScreenX(p.x);
+    const sy = cam.toScreenY(p.y);
+    const r = def.radius * z;
+    // 撃った直後だけ一回り大きく出て、すぐ落ち着く（拳から生まれた感じ）
+    const born = Math.min(1, p.age / 6);
+    const pulse = 1 + Math.sin(p.age * 0.45) * 0.08;
+    const scale = (0.6 + 0.4 * born) * pulse;
+    const angle = Math.atan2(-p.vy, p.vx);
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.translate(sx, sy);
+    ctx.rotate(angle);
+
+    // 尾。速さがそのまま長さになる。中に気の筋を 3 本走らせる
+    const speed = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
+    const tail = speed * 3.4 * z * born;
+    if (tail > 1) {
+      const g = ctx.createLinearGradient(0, 0, -tail, 0);
+      g.addColorStop(0, `rgba(${rgb},0.5)`);
+      g.addColorStop(1, `rgba(${rgb},0)`);
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(0, -r * 0.62 * scale);
+      ctx.lineTo(-tail, 0);
+      ctx.lineTo(0, r * 0.62 * scale);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = `rgba(255,255,255,0.28)`;
+      ctx.lineWidth = 1.6 * z;
+      ctx.lineCap = 'round';
+      for (let i = 0; i < 3; i += 1) {
+        // 筋は毎フレーム後ろへ送る。止めると尾が板に見える
+        const t = ((p.age * 0.09 + i * 0.33) % 1);
+        const x0 = -tail * t;
+        const y0 = Math.sin(i * 2.1 + p.age * 0.3) * r * 0.34 * (1 - t);
+        ctx.beginPath();
+        ctx.moveTo(x0, y0);
+        ctx.lineTo(x0 - tail * 0.18, y0 * 0.6);
+        ctx.stroke();
+      }
+    }
+
+    // 本体。進む向きへ伸ばした球
+    ctx.save();
+    ctx.scale(1.5 * scale, 0.8 * scale);
+    const core = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+    core.addColorStop(0, 'rgba(255,255,255,0.98)');
+    core.addColorStop(0.3, 'rgba(255,255,255,0.85)');
+    core.addColorStop(0.62, `rgba(${rgb},0.8)`);
+    core.addColorStop(1, `rgba(${rgb},0)`);
+    ctx.fillStyle = core;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // 巻き付く輪。潰した楕円を 2 枚、位相をずらして回す
+    ctx.strokeStyle = `rgba(${rgb},0.55)`;
+    ctx.lineWidth = 2.2 * z;
+    for (let i = 0; i < 2; i += 1) {
+      const phase = p.age * 0.26 + i * Math.PI * 0.5;
+      // 輪の縦幅を sin で往復させると、球を回り込んでいるように見える
+      const ry = Math.abs(Math.sin(phase)) * r * 0.86 * scale + r * 0.1;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 1.32 * scale, ry, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
     ctx.restore();
   }
 
@@ -1451,6 +1785,11 @@ export class Renderer {
       return;
     }
 
+    if (fx.type === 'wardUp' || fx.type === 'wardBreak') {
+      this._drawWardBurst(fx, t, fx.type === 'wardBreak');
+      return;
+    }
+
     if (fx.type === 'blood') {
       this._drawBlood(fx, t);
       return;
@@ -1510,6 +1849,76 @@ export class Renderer {
       ctx.lineTo(sx + Math.cos(a) * r1, sy + Math.sin(a) * r1);
       ctx.stroke();
     }
+    ctx.restore();
+  }
+
+  /**
+   * 結界が張られた瞬間（wardUp）と、割れた瞬間（wardBreak）。
+   *
+   * 同じ 1 つの関数で描き分けているのは、**どちらも同じ球の出来事**だから。
+   * 別々に描くと、張ったときと割れたときで結界の大きさが食い違って見える。
+   *
+   *   張る  … 外から輪が締まって、球の面が現れる
+   *   割れる… 輪が外へ弾け、破片が同じ向きへ散る
+   *
+   * 弾いた側の見返り（返し技）はこのあと必ず飛ぶので、
+   * ここは「弾いた」ことだけを短く伝えて、欠片の邪魔をしない。
+   *
+   * @param {boolean} breaking 割れた側か
+   */
+  _drawWardBurst(fx, t, breaking) {
+    const cam = this.cam;
+    const ctx = this.ctx;
+    const z = cam.zoom;
+    const sx = cam.toScreenX(fx.x);
+    const sy = cam.toScreenY(fx.y);
+    const base = (fx.radius || 130) * z;
+    const rgb = '255, 106, 134';
+    // 張るときは外から内へ、割れるときは内から外へ
+    const r = breaking ? base * (0.9 + t * 0.7) : base * (1.55 - t * 0.55);
+    const alpha = (1 - t) * (1 - t);
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+
+    // 輪
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = `rgba(${rgb},0.95)`;
+    ctx.lineWidth = (breaking ? 4.5 : 3) * z * (1 - t * 0.6);
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 中心の閃光。割れた瞬間だけ強く出す
+    if (breaking) {
+      const g = ctx.createRadialGradient(sx, sy, 0, sx, sy, base * (0.4 + t));
+      g.addColorStop(0, `rgba(255,255,255,${0.7 * alpha})`);
+      g.addColorStop(0.4, `rgba(${rgb},${0.4 * alpha})`);
+      g.addColorStop(1, `rgba(${rgb},0)`);
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(sx, sy, base * (0.4 + t), 0, Math.PI * 2);
+      ctx.fill();
+
+      // 破片。輪と同じ球から、外へ飛び散る
+      ctx.fillStyle = `rgba(255,235,240,${alpha})`;
+      for (let i = 0; i < 12; i += 1) {
+        const a = (i / 12) * Math.PI * 2 + fx.seed;
+        const d = base * (0.7 + t * 1.25) * (0.8 + frand(fx.seed + i) * 0.5);
+        const len = base * 0.22 * (1 - t);
+        ctx.save();
+        ctx.translate(sx + Math.cos(a) * d, sy + Math.sin(a) * d);
+        ctx.rotate(a);
+        ctx.beginPath();
+        ctx.moveTo(len, 0);
+        ctx.lineTo(-len * 0.6, -len * 0.32);
+        ctx.lineTo(-len * 0.6, len * 0.32);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
     ctx.restore();
   }
 

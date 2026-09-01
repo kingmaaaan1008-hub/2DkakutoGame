@@ -188,6 +188,15 @@ export class Simulation {
       // ガードには勝つが跳ばれると負ける、という択にするための一行。
       if (hit.grab && defender.airborne) continue;
 
+      // 結界がスキルを弾く。当たらなかったことになるので moveHitLanded は立てない
+      // （踏み込みを止める stopOnHit も、当てた側から見れば何も起きていない）。
+      // group だけは使ったことにして、同じ判定で弾き直さないようにする。
+      if (defender.wardRepels(hit)) {
+        attacker.usedGroups.push(hit.group);
+        defender.repelWithWard(hit, attacker, this);
+        break;
+      }
+
       // 同じ group は 1回の技中に 1度だけ当たる
       attacker.usedGroups.push(hit.group);
       attacker.moveHitLanded = true;
@@ -237,21 +246,21 @@ export class Simulation {
       if (alive >= def.maxAlive) return;
     }
 
-    // 発生位置と飛ぶ向きは技側で上書きできる。
-    // dir は「前方向が正・上が正」で、長さは気にしなくてよい（ここで正規化する）。
+    // 発生位置は技側で上書きできる。
     const origin = spawn.origin ?? def.origin;
-    const dir = spawn.dir ?? { x: 1, y: 0 };
-    const len = Math.sqrt(dir.x * dir.x + dir.y * dir.y) || 1;
+    const x = fighter.x + fighter.facing * origin.x;
+    // groundBound のものは呼んだ高さに関係なく地面から出る
+    // （空中で呼んだ彼氏が空を走らないように）
+    const y = (def.groundBound ? 0 : fighter.y) + origin.y;
+    const [ux, uy] = this._launchDir(spawn, fighter, x, y);
 
     this.projectiles.push({
       type: spawn.type,
       owner: fighter.index,
-      x: fighter.x + fighter.facing * origin.x,
-      // groundBound のものは呼んだ高さに関係なく地面から出る
-      // （空中で呼んだ彼氏が空を走らないように）
-      y: (def.groundBound ? 0 : fighter.y) + origin.y,
-      vx: (fighter.facing * def.speed * dir.x) / len,
-      vy: (def.speed * dir.y) / len,
+      x,
+      y,
+      vx: def.speed * ux,
+      vy: def.speed * uy,
       facing: fighter.facing,
       life: def.lifetime,
       age: 0,
@@ -280,6 +289,46 @@ export class Simulation {
        */
       resting: false,
     });
+  }
+
+  /**
+   * 弾が飛び出す向き（長さ 1・世界座標）。
+   *
+   * 既定は技データの `dir` を「前方向が正・上が正」で読む。
+   * `aim` が立っているものは**その瞬間の相手**を狙い、`spread` があれば
+   * そこから回した向きになる。扇に開いて飛ぶ弾を作るためのもので、
+   * 開き具合の cos/sin は技データが定数として持つ
+   * （実行時に三角関数を呼ばないため。projectiles.js の冒頭を参照）。
+   *
+   * @returns {[number, number]} [x成分, y成分]
+   */
+  _launchDir(spawn, fighter, x, y) {
+    let dx;
+    let dy;
+    if (spawn.aim) {
+      const target = this.fighters[1 - fighter.index];
+      const hurt = target.hurtBox();
+      dx = hurt.x + hurt.w / 2 - x;
+      // 胴の中ほどを狙う。足元を狙うと、跳んでいる相手の下を抜けていく
+      dy = hurt.y + hurt.h * 0.55 - y;
+    } else {
+      const dir = spawn.dir ?? { x: 1, y: 0 };
+      dx = fighter.facing * dir.x;
+      dy = dir.y;
+    }
+    let len = Math.sqrt(dx * dx + dy * dy);
+    // 狙い先と発射点がぴたり重なると向きが決まらない。前へ出しておく
+    if (len < 0.001) {
+      dx = fighter.facing;
+      dy = 0;
+      len = 1;
+    }
+    dx /= len;
+    dy /= len;
+
+    const sp = spawn.spread;
+    if (!sp) return [dx, dy];
+    return [dx * sp.c - dy * sp.s, dx * sp.s + dy * sp.c];
   }
 
   /**
@@ -365,10 +414,17 @@ export class Simulation {
             }
           : { x: p.x - def.radius, y: p.y - def.radius, w: def.radius * 2, h: def.radius * 2 };
         if (boxesOverlap(box, target.hurtBox())) {
-          target.receiveHit(def, p.x, p.facing, this.fighters[p.owner], this);
-          if (def.destroyOnHit) remove = true;
-          // 消えないものは、そのまま走り抜けられるように判定だけ切る
-          else p.spent = true;
+          if (target.wardRepels(def)) {
+            // 結界がスキルの弾を弾いた。**当たらなかったことになる**ので
+            // 走り抜ける弾（彼氏）もここで砕けて消える
+            target.repelWithWard(def, this.fighters[p.owner], this);
+            remove = true;
+          } else {
+            target.receiveHit(def, p.x, p.facing, this.fighters[p.owner], this);
+            if (def.destroyOnHit) remove = true;
+            // 消えないものは、そのまま走り抜けられるように判定だけ切る
+            else p.spent = true;
+          }
         }
       }
 

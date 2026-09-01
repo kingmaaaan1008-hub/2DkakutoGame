@@ -631,8 +631,13 @@ export class CpuController {
      * 固めている相手には打撃系の崩しより価値が高い。
      *
      * 判定を持たないスキル（忍者の煙玉）は、そもそも振っても何も起きない。
+     *
+     * 結界を張っている相手（巫女）に振るのはもっと悪い。**スキルだけ**が
+     * 無効化されて欠片が返ってくるので、振った時点で負ける。
+     * 結界は打撃には何もしないので、崩しは普通の攻撃に任せる。
      */
-    const skillUsable = !prof.skill.harmless && !(prof.skill.grab && foe.airborne);
+    const skillUsable =
+      !prof.skill.harmless && !(prof.skill.grab && foe.airborne) && !foe.isWarding;
     // 遠距離キャラは離れて弾を撒くのが仕事
     const ranged = prof.attack.projectile;
     const idealRange = ranged ? 430 : hitRange * 0.85;

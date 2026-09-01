@@ -55,6 +55,13 @@ const KNOCKDOWN_LAUNCH_VY = 9.5;
 /** ダウンの各段階。 */
 const DOWN_PHASE = { AIR: 0, LIE: 1, GETUP: 2 };
 
+/**
+ * 結界でスキルを弾いたときに止まる時間。
+ * 打撃のヒットストップ（7〜12）より長い。**弾いたことが分かる間**を置いてから
+ * 返しが出るようにしてあるので、ここを削ると結界が消えたようにしか見えない。
+ */
+const WARD_REPEL_HITSTOP = 13;
+
 export class Fighter {
   /**
    * @param {object} def キャラ定義（characters/*.js）
@@ -114,6 +121,19 @@ export class Fighter {
      * 攻めるためではなく、間合いを読ませないためのもの。
      */
     this.vanishTicks = 0;
+    /**
+     * 結界を張っている残りティック（巫女のスキル）。
+     *
+     * 0 より大きい間は**相手のスキル攻撃（ガード不能技と掴み）だけ**が
+     * 無効化され、その場で返し技（キャラ定義の wardCounter）に移る。
+     * 打撃も飛び道具も普通に当たるので、これは避ける手段ではなく
+     * **スキルを読んだときだけ通る返し**になる。
+     *
+     * 技そのものとは別に数えているので、返しに移ったあとも結界は残る。
+     * 照射のように何度も当たり続けるスキルを、1 発だけ弾いて
+     * 残りをまともに食らう、ということにならないため。
+     */
+    this.wardTicks = 0;
     /**
      * 自分を掴んでいる相手の index。掴まれていなければ -1。
      * 掴んだ本人だけがこちらに判定を通せる、という判断にも使う。
@@ -179,6 +199,11 @@ export class Fighter {
   /** 姿を消しているか。描画と「技を出せるか」の両方がここを見る。 */
   get isVanished() {
     return this.vanishTicks > 0;
+  }
+
+  /** 結界を張っているか。描画と、相手のスキルを弾く判断がここを見る。 */
+  get isWarding() {
+    return this.wardTicks > 0;
   }
 
   /** 掴まれているか。 */
@@ -403,7 +428,9 @@ export class Fighter {
   startMove(id, opponent) {
     const move = this.def.moves[id];
     if (!move) throw new Error(`${this.def.id}: 未定義の技 "${id}"`);
-    if (move.turnOnStart && opponent && !this.airborne) {
+    // 空中技は跳んだときの向きのまま出る。相手を狙って撃つ技だけが
+    // turnInAir で例外になる（狙う向きと絵の向きを食い違わせないため）
+    if (move.turnOnStart && opponent && (!this.airborne || move.turnInAir)) {
       this.facing = opponent.x >= this.x ? 1 : -1;
     }
     this.state = STATE.MOVE;
@@ -415,6 +442,10 @@ export class Fighter {
     this.chainQueued = null;
     // 技を出したら滞空は終わり（滞空から急降下、という繋ぎを作るため）
     this.hoverTicks = 0;
+    // 結界を張ったまま殴りには行けない。ただし結界そのものの返し技は
+    // 「割れた結界が飛んでいく」ものなので、そこだけは張ったまま繋ぐ
+    // （照射のように連続で当たるスキルを、返しの最中も弾き続けるため）
+    if (id !== this.def.wardCounter) this.wardTicks = 0;
     // 空中技は跳んだ勢いを残す（地上技はその場で止まる）
     if (!this.moveAir) this.vx = 0;
     this.setAnim(move.anim, {
@@ -522,6 +553,8 @@ export class Fighter {
     // 姿を消していられる時間。状態に関係なく減るので、
     // 消えている最中に食らっても隠れ続けるということはない。
     if (this.vanishTicks > 0) this.vanishTicks -= 1;
+    // 結界を張っていられる時間。こちらも状態に関係なく減る
+    if (this.wardTicks > 0) this.wardTicks -= 1;
 
     switch (this.state) {
       case STATE.IDLE:
@@ -805,6 +838,16 @@ export class Fighter {
       this.vanishTicks = move.vanish.ticks;
     }
 
+    // 結界を張る（巫女のスキル）。両腕を開き切ったコマで張られる
+    if (move.ward && this.moveFrame === move.ward.frame) {
+      this.wardTicks = move.ward.ticks;
+      sim?.addEffect('wardUp', this.x, this.y + (this.def.wardAura?.y ?? 110), {
+        life: 18,
+        facing: this.facing,
+        radius: this.def.wardAura?.radius ?? 130,
+      });
+    }
+
     // 自身の移動成分（前方向が正）
     for (const m of move.motion) {
       if (this.moveFrame < m.start || this.moveFrame > m.end) continue;
@@ -975,6 +1018,55 @@ export class Fighter {
     }
   }
 
+  // ── 結界 ────────────────────────────────────────────────────
+
+  /**
+   * その攻撃を結界が弾くか。
+   *
+   * 弾くのは**スキルだけ**。このゲームでスキルの印になっているのは
+   * 「ガードを崩す（guardBreak）」と「掴み（grab）」の 2 つなので、
+   * 判定データにそれが立っているかだけを見る。技だろうと飛び道具だろうと
+   * 同じ形で持っているので、どちらもこの 1 か所で拾える。
+   *
+   * 打撃も普通の弾も素通しなので、**張ったまま殴られれば当たり前に死ぬ**。
+   *
+   * @param {object} hit 判定データ（技の hit / 飛び道具の定義）
+   */
+  wardRepels(hit) {
+    if (this.wardTicks <= 0 || !this.def.wardCounter) return false;
+    return hit.guardBreak === true || hit.grab === true;
+  }
+
+  /**
+   * 結界でスキルを弾いて、割れた結界の欠片を返す。
+   *
+   * のけぞりもダメージも無い ＝ **無かったことになる**。
+   * 代わりに両者の時間を少し止めて、明けたところで返し技が出る。
+   *
+   * 返しに移るのは 1 回だけ。結界そのものは残っているので、
+   * 照射のように何度も当たるスキルは 2 発目から「弾くだけ」になる
+   * （返しを出し直すと、当たるたびにモーションが頭へ戻ってしまう）。
+   *
+   * @param {object} hit 弾いた判定
+   * @param {Fighter|null} attacker 弾かれた側
+   * @param {import('./sim.js').Simulation} sim
+   */
+  repelWithWard(hit, attacker, sim) {
+    const stop = Math.max(hit.hitstop ?? 0, WARD_REPEL_HITSTOP);
+    this.hitstop = stop;
+    if (attacker) attacker.hitstop = stop;
+
+    const y = this.y + (this.def.wardAura?.y ?? 110);
+    sim.addEffect('wardBreak', this.x, y, {
+      life: 24,
+      facing: this.facing,
+      radius: this.def.wardAura?.radius ?? 130,
+    });
+    sim.shake = Math.max(sim.shake, 13);
+
+    if (this.moveId !== this.def.wardCounter) this.startMove(this.def.wardCounter, attacker);
+  }
+
   // ── 被弾 ────────────────────────────────────────────────────
 
   /**
@@ -1007,6 +1099,8 @@ export class Fighter {
     // のけぞりもガードも立ち姿勢の絵なので、やられ判定も立ちに戻す
     this.crouchTimer = 0;
     this.hoverTicks = 0;
+    // 弾けなかった攻撃が通った時点で結界は割れる
+    this.wardTicks = 0;
     // 掴まれた状態から打たれた（＝掴んだ側が最後の一撃を入れた）ら、そこで手が離れる
     this.grabbedBy = -1;
     this.hitstop = hit.hitstop;
@@ -1089,6 +1183,7 @@ export class Fighter {
   receiveGrab(grabber, hit, sim) {
     this.crouchTimer = 0;
     this.hoverTicks = 0;
+    this.wardTicks = 0;
     this.hitstop = hit.hitstop;
     grabber.hitstop = hit.hitstop;
 
@@ -1156,7 +1251,7 @@ export class Fighter {
       this.state, this.stateTimer, this.moveId, this.moveFrame,
       this.moveHitLanded, this.moveAir, this.usedGroups.slice(), this.chainQueued,
       this.hitstop, this.landLag, this.downPhase, this.airJumps, this.doomed,
-      this.crouchTimer, this.hoverTicks, this.vanishTicks, this.grabbedBy,
+      this.crouchTimer, this.hoverTicks, this.vanishTicks, this.wardTicks, this.grabbedBy,
       this.guardHeld, this.walkDir, this.dashDir, this.prevInput,
       this.tapDir, this.tapTimer, this.bufAttack, this.bufSkill, this.bufJump,
       this.comboCount, this.comboDisplay, this.comboDisplayTimer,
@@ -1176,7 +1271,8 @@ export class Fighter {
     this.chainQueued = s[i++];
     this.hitstop = s[i++]; this.landLag = s[i++]; this.downPhase = s[i++];
     this.airJumps = s[i++]; this.doomed = s[i++]; this.crouchTimer = s[i++];
-    this.hoverTicks = s[i++]; this.vanishTicks = s[i++]; this.grabbedBy = s[i++];
+    this.hoverTicks = s[i++]; this.vanishTicks = s[i++]; this.wardTicks = s[i++];
+    this.grabbedBy = s[i++];
     this.guardHeld = s[i++]; this.walkDir = s[i++]; this.dashDir = s[i++]; this.prevInput = s[i++];
     this.tapDir = s[i++]; this.tapTimer = s[i++];
     this.bufAttack = s[i++]; this.bufSkill = s[i++]; this.bufJump = s[i++];

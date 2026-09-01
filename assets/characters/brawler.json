@@ -1,0 +1,215 @@
+{
+  "id": "brawler",
+  "images": [
+    "brawler-0.webp",
+    "brawler-1.webp",
+    "brawler-2.webp"
+  ],
+  "pages": [
+    {
+      "w": 3792,
+      "h": 1693
+    },
+    {
+      "w": 3088,
+      "h": 2516
+    },
+    {
+      "w": 2504,
+      "h": 2988
+    }
+  ],
+  "sourceFps": 10,
+  "scale": 0.84167,
+  "height": 202,
+  "texelsPerUnit": 2,
+  "animations": {
+    "idle": {
+      "page": 1,
+      "x": 0,
+      "y": 1723,
+      "cw": 314,
+      "ch": 410,
+      "frames": 8,
+      "ax": 158.86,
+      "ay": 406.52,
+      "src": "kakutou2"
+    },
+    "walk": {
+      "page": 2,
+      "x": 0,
+      "y": 813,
+      "cw": 310,
+      "ch": 438,
+      "frames": 8,
+      "ax": 158.86,
+      "ay": 425.04,
+      "src": "kakutou2"
+    },
+    "run": {
+      "page": 2,
+      "x": 0,
+      "y": 2087,
+      "cw": 285,
+      "ch": 454,
+      "frames": 8,
+      "ax": 131.93,
+      "ay": 443.56,
+      "src": "kakutou2"
+    },
+    "guard": {
+      "page": 2,
+      "x": 0,
+      "y": 1251,
+      "cw": 307,
+      "ch": 400,
+      "frames": 8,
+      "ax": 152.13,
+      "ay": 395.58,
+      "src": "kakutou2"
+    },
+    "punch1": {
+      "page": 1,
+      "x": 0,
+      "y": 2133,
+      "cw": 313,
+      "ch": 383,
+      "frames": 8,
+      "ax": 152.13,
+      "ay": 378.75,
+      "src": "kakutou2"
+    },
+    "punch2": {
+      "page": 2,
+      "x": 0,
+      "y": 0,
+      "cw": 313,
+      "ch": 378,
+      "frames": 8,
+      "ax": 151.29,
+      "ay": 377.91,
+      "src": "kakutou2"
+    },
+    "hurt": {
+      "page": 2,
+      "x": 0,
+      "y": 378,
+      "cw": 311,
+      "ch": 435,
+      "frames": 8,
+      "ax": 152.97,
+      "ay": 430.93,
+      "src": "kakutou2"
+    },
+    "crouch": {
+      "page": 1,
+      "x": 0,
+      "y": 1361,
+      "cw": 333,
+      "ch": 362,
+      "frames": 8,
+      "ax": 170.65,
+      "ay": 356.87,
+      "src": "kakutou2"
+    },
+    "jump": {
+      "page": 1,
+      "x": 0,
+      "y": 515,
+      "cw": 337,
+      "ch": 485,
+      "frames": 8,
+      "ax": 156.34,
+      "ay": 479.75,
+      "src": "kakutou2"
+    },
+    "fall": {
+      "page": 2,
+      "x": 0,
+      "y": 1651,
+      "cw": 300,
+      "ch": 436,
+      "frames": 8,
+      "ax": 129.41,
+      "ay": 473.02,
+      "src": "kakutou2"
+    },
+    "land": {
+      "page": 2,
+      "x": 0,
+      "y": 2541,
+      "cw": 234,
+      "ch": 447,
+      "frames": 8,
+      "ax": 128.56,
+      "ay": 437.67,
+      "src": "kakutou2"
+    },
+    "death": {
+      "page": 0,
+      "x": 0,
+      "y": 0,
+      "cw": 474,
+      "ch": 350,
+      "frames": 8,
+      "ax": 230.41,
+      "ay": 346.77,
+      "src": "kakutou2"
+    },
+    "grabbed": {
+      "page": 1,
+      "x": 0,
+      "y": 1000,
+      "cw": 335,
+      "ch": 361,
+      "frames": 8,
+      "ax": 163.91,
+      "ay": 444.4,
+      "src": "kakutou2"
+    },
+    "flykick": {
+      "page": 1,
+      "x": 0,
+      "y": 0,
+      "cw": 386,
+      "ch": 515,
+      "frames": 8,
+      "ax": 153.81,
+      "ay": 421.73,
+      "src": "kakutou2"
+    },
+    "flipheel": {
+      "page": 0,
+      "x": 0,
+      "y": 1197,
+      "cw": 395,
+      "ch": 496,
+      "frames": 8,
+      "ax": 176.54,
+      "ay": 472.18,
+      "src": "kakutou2"
+    },
+    "jumpkick": {
+      "page": 0,
+      "x": 0,
+      "y": 844,
+      "cw": 410,
+      "ch": 353,
+      "frames": 8,
+      "ax": 181.59,
+      "ay": 367.34,
+      "src": "kakutou2"
+    },
+    "somersault": {
+      "page": 0,
+      "x": 0,
+      "y": 350,
+      "cw": 415,
+      "ch": 494,
+      "frames": 8,
+      "ax": 208.52,
+      "ay": 490.69,
+      "src": "kakutou2"
+    }
+  }
+}
