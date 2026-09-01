@@ -106,6 +106,14 @@ export class Fighter {
     /** 残りの空中ジャンプ回数。 */
     this.airJumps = 0;
     /**
+     * 着地してから今までに、**空中で技から技へ繋いだ回数**。
+     *
+     * キャラ定義に `airChainLimit` があると、この回数までしか空中の連携を
+     * 受け付けない（超えたぶんはボタンを押しても繋がらない）。
+     * 数え直すのは地面に着いたときだけなので、跳び直さないと戻らない。
+     */
+    this.airChains = 0;
+    /**
      * 滞空の残りティック（飛行を持つキャラだけ 0 より大きくなる）。
      * この間は落下が止まり、左右入力でその高さのまま移動できる。
      */
@@ -848,13 +856,15 @@ export class Fighter {
       });
     }
 
-    // 自身の移動成分（前方向が正）
+    // 自身の移動成分（前方向が正）。**書いてある成分だけ**を上書きする。
+    // vx を書かなければ**それまでの横の勢いがそのまま残り**（跳んだ勢いを
+    // 引き継いで蹴る空中技）、vy を書かなければ重力に任せて落ちる。
+    // `vx: 0` / `vy: 0` は「勢いを殺す」「その場に留まる」という**指定**なので、
+    // 0 かどうかではなく「書かれているか」で見る。
     for (const m of move.motion) {
       if (this.moveFrame < m.start || this.moveFrame > m.end) continue;
       if (m.stopOnHit && this.moveHitLanded) continue;
-      this.vx = this.facing * (m.vx ?? 0);
-      // vy: 0 は「重力を打ち消してその場に留まる」という指定なので、
-      // 0 かどうかではなく「書かれているか」で見る
+      if (m.vx != null) this.vx = this.facing * m.vx;
       if (m.vy != null) this.vy = m.vy;
     }
 
@@ -874,10 +884,17 @@ export class Fighter {
       if (s.frame === this.moveFrame) sim.spawnFromMove(this, s);
     }
 
-    // 連携（キャンセル）入力
+    // 連携（キャンセル）入力。
+    // 空中の連携だけは回数を数えていて、キャラ定義の `airChainLimit` に達したら
+    // 窓が開いていても受け付けない（着地するまで数え直さない）。
+    // 制限を持たないキャラは今までどおり何回でも繋がる。
+    const airLimit = this.def.airChainLimit;
+    const airChainFull = this.airborne && airLimit != null && this.airChains >= airLimit;
     for (const c of move.chains) {
       if (this.moveFrame < c.from || this.moveFrame > c.to) continue;
+      if (airChainFull) break;
       if (this._takeBuffered(c.button)) {
+        if (this.airborne) this.airChains += 1;
         // atEnd は技を途中で切らず、出し切ってから次へ移る
         if (c.atEnd) {
           this.chainQueued = c.move;
@@ -956,6 +973,8 @@ export class Fighter {
       const crashed = this.state === STATE.DOWN && this.downPhase === DOWN_PHASE.AIR;
       this.y = 0;
       this.vy = 0;
+      // 空中の連携回数は地面に着いたところで数え直す（跳び直せばまた繋げる）
+      this.airChains = 0;
       if (wasAir) {
         const landed = airMoveLanded ? this.currentMove() : null;
         this.landLag = landed?.landLag ?? LAND_LAG;
@@ -968,27 +987,31 @@ export class Fighter {
         this.hoverTicks = 0;
         this.vx *= 0.4;
         /**
-         * 叩きつけて降りる技の着地（`landImpact`）。
-         *
-         * ふつうの空中技は着地した瞬間に land の絵へ移るが、それだと
-         * 「振り下ろした刃が地面に刺さっている」ような**決めの絵を持つ技**が、
-         * いちばん見せたいコマを飛ばして立ち上がりに化ける。
-         * この指定がある技は、硬直の間そのまま技の最後のコマを保持して、
-         * あわせて土煙と揺れを出す。
+         * 叩きつけて降りる技の着地（`landImpact`）。足元へ土煙を出して画面を揺らす。
          */
         const impact = landed?.landImpact;
-        if (impact) {
+        if (impact && sim) {
+          sim.addEffect('dust', this.x, 0, {
+            life: impact.dust ?? 26,
+            radius: impact.radius ?? 150,
+            facing: this.facing,
+          });
+          sim.shake = Math.max(sim.shake, impact.shake ?? 0);
+        }
+        /**
+         * 着地の絵。ふつうは land（立ち上がり）へ移る。
+         *
+         * `landImpact.hold` を立てた技だけが例外で、硬直の間ずっと**技の最後のコマ**を
+         * 保持する。「振り下ろした刃が地面に刺さっている」ような**決めの絵を持つ技**は、
+         * land へ移るといちばん見せたいコマを飛ばして立ち上がりに化けるため。
+         *
+         * 逆に、決めの絵を持たない技（踏み抜いてそのまま立て直す蹴りなど）は、
+         * 土煙だけ出して**ジャンプと同じ着地の絵**に任せたほうが自然に繋がる。
+         */
+        if (impact?.hold) {
           // はみ出したコマ範囲は描画側で丸められるので、コマ数を知らないまま
           // 「最後のコマ」を指せる（シミュレーション側は絵の枚数を知らない）
           this.setAnim(landed.anim, { fps: 1, hold: true, restart: true, range: [999, 999] });
-          if (sim) {
-            sim.addEffect('dust', this.x, 0, {
-              life: impact.dust ?? 26,
-              radius: impact.radius ?? 150,
-              facing: this.facing,
-            });
-            sim.shake = Math.max(sim.shake, impact.shake ?? 0);
-          }
         } else {
           this.setAnim(this.def.anims.land, { fps: 20, hold: true, restart: true });
         }
@@ -1250,7 +1273,7 @@ export class Fighter {
       this.x, this.y, this.vx, this.vy, this.facing, this.health,
       this.state, this.stateTimer, this.moveId, this.moveFrame,
       this.moveHitLanded, this.moveAir, this.usedGroups.slice(), this.chainQueued,
-      this.hitstop, this.landLag, this.downPhase, this.airJumps, this.doomed,
+      this.hitstop, this.landLag, this.downPhase, this.airJumps, this.airChains, this.doomed,
       this.crouchTimer, this.hoverTicks, this.vanishTicks, this.wardTicks, this.grabbedBy,
       this.guardHeld, this.walkDir, this.dashDir, this.prevInput,
       this.tapDir, this.tapTimer, this.bufAttack, this.bufSkill, this.bufJump,
@@ -1270,7 +1293,8 @@ export class Fighter {
     this.moveHitLanded = s[i++]; this.moveAir = s[i++]; this.usedGroups = s[i++].slice();
     this.chainQueued = s[i++];
     this.hitstop = s[i++]; this.landLag = s[i++]; this.downPhase = s[i++];
-    this.airJumps = s[i++]; this.doomed = s[i++]; this.crouchTimer = s[i++];
+    this.airJumps = s[i++]; this.airChains = s[i++];
+    this.doomed = s[i++]; this.crouchTimer = s[i++];
     this.hoverTicks = s[i++]; this.vanishTicks = s[i++]; this.wardTicks = s[i++];
     this.grabbedBy = s[i++];
     this.guardHeld = s[i++]; this.walkDir = s[i++]; this.dashDir = s[i++]; this.prevInput = s[i++];

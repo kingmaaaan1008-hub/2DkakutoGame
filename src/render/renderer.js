@@ -280,6 +280,25 @@ export class Renderer {
     return vfx.power + ((vfx.powerTo ?? vfx.power) - vfx.power) * t;
   }
 
+  /**
+   * 技データの `tilt`（絵だけの傾き）を読む。
+   *
+   * 傾けるのは**絵だけ**で、判定も移動も動かない。素材の姿勢が技の趣旨と
+   * 食い違うとき（真下へ落ちる技なのに立ち姿で蹴っている、など）に、
+   * シートを撮り直さずに姿勢だけ寝かせるためのもの。
+   *
+   * **技の間ずっと同じ角度**で、進み具合による補間はしない。絵は数コマ単位で
+   * 飛び飛びに動くので、そこへ 1 ティックずつの回転を重ねると、コマが変わらない
+   * 間だけ体が逆向きに滑ってガクつく（`moves.js` の `tilt` を参照）。
+   */
+  _spriteTilt(f) {
+    if (f.state !== STATE.MOVE) return null;
+    const tilt = f.currentMove()?.tilt;
+    if (!tilt || Math.abs(tilt.deg) < 0.01) return null;
+    // 回す中心は既定で腰の高さ。足元で回すと、傾けたぶん体が横へ振り出される
+    return { angle: (tilt.deg * Math.PI) / 180, pivot: tilt.pivot ?? 100 };
+  }
+
   _drawFighter(f) {
     const sprite = this.sprites[f.def.id];
     if (!sprite) return;
@@ -314,6 +333,18 @@ export class Renderer {
     const bg = f.def.beamGlow;
     const layer = bg && this._beamGlow.get(sprite);
 
+    // 技データが姿勢の補正を持っていれば、ここから下の描画ごと傾ける。
+    // 本体・裏当て・発光層をまとめて回したいので、個々の描画ではなく
+    // 座標系のほうを回す（判定は sim 側の話なので、当然そのまま）。
+    const tilt = this._spriteTilt(f);
+    if (tilt) {
+      const py = sy - tilt.pivot * cam.zoom;
+      ctx.save();
+      ctx.translate(sx, py);
+      ctx.rotate(tilt.angle * facing);
+      ctx.translate(-sx, -py);
+    }
+
     // 刃の裏当て。**本体より先に**描くのが肝で、素材の刃には半透明のコマが
     // あるので（実測で下位 1/4 が alpha 152）、先に不透明な光を敷いておかないと
     // 透けた先に背景が出る。加算合成では背景を隠せないので、ここは source-over。
@@ -337,6 +368,9 @@ export class Renderer {
       drawFighterSprite(ctx, sprite, f.anim, sx, sy, facing, cam.zoom, scale, layer);
       ctx.restore();
     }
+
+    // 傾けた座標系を戻す。ここから先（結界・ガード壁）は傾けない
+    if (tilt) ctx.restore();
 
     // キャラ定義に guardWall があれば、ガード中だけ前に張る
     if (f.def.guardWall && (f.state === STATE.GUARD || f.state === STATE.BLOCK)) {

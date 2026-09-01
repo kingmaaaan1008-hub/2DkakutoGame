@@ -2214,9 +2214,9 @@ section('戦闘メイドの回転斬り');
     sim.effects.some((fx) => fx.type === 'dust' && fx.y === 0),
     sim.effects.map((fx) => fx.type).join(','));
   check('画面が揺れる', sim.shake >= impact.shake, `shake=${sim.shake}`);
-  check('着地の絵にならず、落としの絵のまま固まる',
-    p1.anim.name === 'aether_slam' && p1.anim.range != null,
-    `anim=${p1.anim.name} range=${p1.anim.range}`);
+  check('着地の絵にならず、落としの絵のまま固まる（hold）',
+    impact.hold && p1.anim.name === 'aether_slam' && p1.anim.range != null,
+    `hold=${impact.hold} anim=${p1.anim.name} range=${p1.anim.range}`);
   // 硬直が明けるまでその絵のまま
   run(sim, impact.shake, 0);
   check('硬直の間ずっと保持する', p1.anim.name === 'aether_slam', `anim=${p1.anim.name}`);
@@ -2664,38 +2664,203 @@ section('格闘娘のサマーソルト');
   check('4 発目まで繋がっている', p2.state === STATE.HIT, `state=${p2.state}`);
 }
 
+{
+  // 空中攻撃は**落ちながら蹴る**急降下蹴り。横は跳んだ勢いのままで、
+  // 判定は前方に残る（落ちながら相手の頭から肩を撫でていく形で当たる）
+  const sim = newSim(['brawler', 'swordsman']);
+  place(sim, 500, 1500);
+  const p1 = sim.fighters[0];
+  const box = getCharacter('brawler').moves.jumpKick.hits[0].box;
+  check('飛び蹴りの判定は前方に残る', box.x > 0, `x=${box.x}`);
+  // 上りの途中で出す。技は縦にも横にも触らないので、そのまま上がり続ける
+  const ref = newSim(['brawler', 'swordsman']);   // 跳ぶだけの比較用（攻撃しない）
+  place(ref, 500, 1500);
+  const q = ref.fighters[0];
+  run(sim, 1, BTN.UP | BTN.RIGHT); run(ref, 1, BTN.UP | BTN.RIGHT);
+  run(sim, 4, 0); run(ref, 4, 0);
+  const x0 = p1.x;
+  const y0 = p1.y;
+  run(sim, 1, BTN.ATTACK); run(ref, 1, 0);
+  check('上りの途中でも出せる', p1.moveId === 'jumpKick', `move=${p1.moveId}`);
+  run(sim, 8, 0); run(ref, 8, 0);
+  check('上りで出したらそのまま上がる', p1.y > y0, `y ${y0.toFixed(0)} -> ${p1.y.toFixed(0)}`);
+  check('横の勢いも残る', p1.x - x0 > 40, `dx=${(p1.x - x0).toFixed(1)}`);
+  // 跳ぶだけのときと**同じ弧**をなぞる（技が軌道を一切変えていない）
+  check('蹴っても弧は変わらない', Math.abs(p1.x - q.x) < 0.01 && Math.abs(p1.y - q.y) < 0.01,
+    `kick=(${p1.x.toFixed(1)}, ${p1.y.toFixed(1)}) jump=(${q.x.toFixed(1)}, ${q.y.toFixed(1)})`);
+  for (let i = 0; i < 90 && p1.y > 0; i += 1) { run(sim, 1, 0); run(ref, 1, 0); }
+  check('着地するところまで同じ弧', Math.abs(p1.x - q.x) < 0.01 && q.y === 0,
+    `kick=${p1.x.toFixed(1)} jump=${q.x.toFixed(1)}`);
+}
+
+{
+  // 蹴りからは**スキルで回転かかと落としへ抜けられる**（空中も 1 往復ぶんは自由）
+  const chain = getCharacter('brawler').moves.jumpKick.chains[0];
+  const hit = getCharacter('brawler').moves.jumpKick.hits[0];
+  check('連携の窓は判定の次のフレームから開く',
+    chain?.move === 'heelSpin' && chain.from === hit.start + 1,
+    `from=${chain?.from} 判定=${hit.start}`);
+  const sim = newSim(['brawler', 'swordsman']);
+  place(sim, 500, 1500);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 6, 0);
+  run(sim, 1, BTN.ATTACK);
+  run(sim, chain.from, 0);           // 窓が開くまで
+  run(sim, 1, BTN.SKILL);
+  run(sim, 1, 0);
+  check('蹴りの最中にスキルで回転へ抜けられる', p1.moveId === 'heelSpin', `move=${p1.moveId}`);
+  // 回転からは攻撃で蹴りへ戻れる（この 2 つは互いにキャンセルできる）
+  run(sim, 4, 0);
+  run(sim, 1, BTN.ATTACK);
+  run(sim, 1, 0);
+  check('回転からも蹴りへ戻れる', p1.moveId === 'jumpKick', `move=${p1.moveId}`);
+}
+
+{
+  // 空中の連携は **3 回まで**（着地するまで数え直さない）
+  const limit = getCharacter('brawler').airChainLimit;
+  check('空中の連携に上限がある', limit === 3, `limit=${limit}`);
+
+  const sim = newSim(['brawler', 'swordsman']);
+  place(sim, 500, 1500);
+  const p1 = sim.fighters[0];
+  // 高く跳んで、回転 ⇄ 飛び蹴りを繋げられるだけ繋ぐ
+  run(sim, 1, BTN.UP);
+  run(sim, 4, 0);
+  run(sim, 1, BTN.SKILL);            // 1 発目は連携ではない（空中スキル）
+  check('跳んでから出す 1 発目は数えない', p1.airChains === 0, `n=${p1.airChains}`);
+  // 窓が開くまでの待ち時間は、いま出している技ごとに違う
+  // （回転は 4 フレーム目から、飛び蹴りは判定の次の 9 フレーム目から）
+  const steps = [
+    { wait: 5, btn: BTN.ATTACK, to: 'jumpKick' },   // 回転 → 蹴り
+    { wait: 10, btn: BTN.SKILL, to: 'heelSpin' },   // 蹴り → 回転
+    { wait: 5, btn: BTN.ATTACK, to: 'jumpKick' },   // 回転 → 蹴り
+  ];
+  for (let n = 0; n < steps.length; n += 1) {
+    run(sim, steps[n].wait, 0);
+    run(sim, 1, steps[n].btn);
+    run(sim, 1, 0);
+    check(`${n + 1} 回目の連携は通る`,
+      p1.moveId === steps[n].to && p1.airChains === n + 1,
+      `move=${p1.moveId} n=${p1.airChains}`);
+  }
+  // 4 回目は窓が開いていても繋がらない
+  run(sim, 10, 0);
+  const before = p1.moveId;
+  run(sim, 1, BTN.SKILL);
+  run(sim, 1, 0);
+  check('4 回目の連携は繋がらない', p1.moveId === before && p1.airChains === 3,
+    `move=${p1.moveId} n=${p1.airChains}`);
+
+  // 着地すれば数え直す
+  for (let i = 0; i < 90 && p1.y > 0; i += 1) run(sim, 1, 0);
+  check('着地で数え直す', p1.airChains === 0, `n=${p1.airChains}`);
+}
+
+{
+  // 上限を持たないキャラは今までどおり何回でも繋がる（他キャラへ漏れていないこと）
+  check('上限はこのキャラだけの指定',
+    CHARACTER_IDS.filter((id) => getCharacter(id).airChainLimit != null).join(',') === 'brawler');
+}
+
+{
+  // 真上に跳んで降り際に出せば、その場で落ちながら蹴る（技は勢いを足さない）
+  const sim = newSim(['brawler', 'swordsman']);
+  place(sim, 500, 1500);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 26, 0);                     // 頂点を越えて落ち始めるまで
+  check('降りに入っている', p1.vy < 0, `vy=${p1.vy.toFixed(1)}`);
+  run(sim, 1, BTN.ATTACK);
+  const x0 = p1.x;
+  const y0 = p1.y;
+  run(sim, 10, 0);
+  check('降り際に出せば真下へ落ちながら蹴る', Math.abs(p1.x - x0) < 0.01 && p1.y < y0 - 50,
+    `dx=${(p1.x - x0).toFixed(2)} y ${y0.toFixed(0)} -> ${p1.y.toFixed(0)}`);
+}
+
+{
+  // 落ちる技なので、当てるのは降り際。浮いている相手の頭を撫でて降りる
+  const sim = newSim(['brawler', 'swordsman']);
+  place(sim, 820, 900);
+  const p1 = sim.fighters[0];
+  run(sim, 1, BTN.UP);
+  run(sim, 8, 0);
+  run(sim, 1, BTN.ATTACK);
+  for (let i = 0; i < 24 && p1.comboDisplay < 1; i += 1) run(sim, 1, 0);
+  check('落ちながら前の判定が当たる', p1.comboDisplay === 1, `hits=${p1.comboDisplay}`);
+}
+
 section('格闘娘の回転かかと落とし');
 {
+  // 回転は「当たるまで回る技」ではなく**相手の方へ弧を描いて跳ぶ移動技**。
+  // 判定を持つのは弧を降り切ってからの振り下ろし（かかと落とし）だけになる。
   const sim = newSim(['brawler', 'swordsman']);
-  place(sim, 860, 900);
+  place(sim, 700, 900);
   const [p1, p2] = sim.fighters;
   run(sim, 1, BTN.UP);
   run(sim, 14, 0);
   const y0 = p1.y;
+  const x0 = p1.x;
   run(sim, 1, BTN.SKILL);
   check('空中スキルで回転が出る', p1.moveId === 'heelSpin', `move=${p1.moveId}`);
-  run(sim, 3, 0);
-  check('真下へ落ちる', p1.y < y0 - 20, `y=${p1.y.toFixed(0)} (from ${y0.toFixed(0)})`);
+  check('回転中は判定が無い',
+    getCharacter('brawler').moves.heelSpin.hits.length === 0);
+  run(sim, 8, 0);
+  check('回転は敵の方へ弧を描いて浮き上がる', p1.y > y0 && p1.x > x0 + 30,
+    `x +${(p1.x - x0).toFixed(0)} y=${p1.y.toFixed(0)} (from ${y0.toFixed(0)})`);
+  // 弧を出し切ると、入力を待たずにかかと落としへ（onEnd）
   for (let i = 0; i < 40 && p1.moveId === 'heelSpin'; i += 1) run(sim, 1, 0);
-  check('当たった瞬間にかかと落としへ移る', p1.moveId === 'heelDrop', `move=${p1.moveId}`);
+  check('弧を降り切るとかかと落としへ移る', p1.moveId === 'heelDrop', `move=${p1.moveId}`);
+  // 200 離れたところから跳んで、押し合いで止まるところまで詰められている
+  check('弧が相手の間合いまで運ぶ', p1.x - x0 > 120 && p2.x - p1.x < 100,
+    `dx=${(p1.x - x0).toFixed(0)} 間合い=${(p2.x - p1.x).toFixed(0)}`);
+  const xDrop = p1.x;
+  const yDrop = p1.y;
   for (let i = 0; i < 60 && p1.state === STATE.MOVE; i += 1) run(sim, 1, 0);
-  check('回転とかかとで 2 ヒットする', p1.comboDisplay === 2, `hits=${p1.comboDisplay}`);
+  check('かかと落としは横へ動かず真下へ落ちる',
+    Math.abs(p1.x - xDrop) < 2 && p1.y < yDrop - 100,
+    `dx=${(p1.x - xDrop).toFixed(1)} y ${yDrop.toFixed(0)} -> ${p1.y.toFixed(0)}`);
+  check('当たるのはかかと落としの 1 発だけ', p1.comboDisplay === 1, `hits=${p1.comboDisplay}`);
   check('締めはダウンを奪う', p2.state === STATE.DOWN || p2.isKO, `state=${p2.state}`);
 }
 
 {
-  // 当たらないまま着地したら「普通に着地する」。急降下技のような重い硬直は付けない
+  // 弧を出した時点で踏み抜く場所は決まっているので、読まれて動かれたら
+  // そのぶんが隙になる。外したときの着地硬直は通常（7）の倍
   const sim = newSim(['brawler', 'swordsman']);
   place(sim, 300, 1500);
   const p1 = sim.fighters[0];
   run(sim, 1, BTN.UP);
   run(sim, 14, 0);
+  const x0 = p1.x;
   run(sim, 1, BTN.SKILL);
+  for (let i = 0; i < 40 && p1.moveId === 'heelSpin'; i += 1) run(sim, 1, 0);
+  // 邪魔が入らなければ弧はきっちり 168 運ぶ（押し合いで止まると、そのぶん手前）
+  check('弧そのものは 168 運ぶ', Math.abs(p1.x - x0 - 168) < 2, `dx=${(p1.x - x0).toFixed(0)}`);
   for (let i = 0; i < 80 && p1.y > 0; i += 1) run(sim, 1, 0);
   check('外したら着地で技が切れる', p1.state === STATE.LAND, `state=${p1.state}`);
-  check('外しても着地硬直は普通のまま', p1.landLag === 7, `landLag=${p1.landLag}`);
+  check('外すと着地硬直が重い', p1.landLag === 14, `landLag=${p1.landLag}`);
   check('回転そのものに着地硬直の指定は無い',
     getCharacter('brawler').moves.heelSpin.landLag === null);
+
+  // 着地の演出（landImpact）。土煙と揺れを出して、蹴り終わりの絵のまま固まる
+  const impact = getCharacter('brawler').moves.heelDrop.landImpact;
+  check('足元に土煙が上がる',
+    sim.effects.some((fx) => fx.type === 'dust' && fx.y === 0),
+    sim.effects.map((fx) => fx.type).join(','));
+  check('画面が揺れる', sim.shake >= impact.shake, `shake=${sim.shake}`);
+  // 決めの絵を持たない技なので `hold` は立てない。絵はジャンプと同じ着地へ移る
+  check('着地の絵はジャンプと同じ land', p1.anim.name === getCharacter('brawler').anims.land,
+    `anim=${p1.anim.name}`);
+  check('最後のコマを保持する指定は付けていない', !impact.hold);
+
+  // **演出を足しても後隙は変わっていない。** 着地から 14 ティックで動けるようになる
+  run(sim, 13, 0);
+  check('硬直の間は着地の絵のまま', p1.state === STATE.LAND, `state=${p1.state}`);
+  run(sim, 1, 0);
+  check('着地から 14 ティックで動けるようになる', p1.state === STATE.IDLE, `state=${p1.state}`);
 }
 
 {
@@ -2718,6 +2883,13 @@ section('格闘娘の回転かかと落とし');
   check('高さを保つ', Math.abs(p1.y - y0) < 2, `y ${y0.toFixed(0)} -> ${p1.y.toFixed(0)}`);
   // 走り（7.4）より速い。19 ティックで 200 以上抜ける
   check('真横へ速く飛ぶ', p1.x - x0 > 150, `dx=${(p1.x - x0).toFixed(0)}`);
+  // 2 段目からは戻れない。押しても足刀のまま（空中の連携はここで終わり）
+  check('飛び足刀からは何にも繋がらない',
+    getCharacter('brawler').moves.flyKick.chains.length === 0);
+  run(sim, 1, BTN.SKILL);
+  run(sim, 2, 0);
+  check('足刀の最中にスキルを押しても回転へ戻らない',
+    p1.state !== STATE.MOVE || p1.moveId === 'flyKick', `move=${p1.moveId}`);
 }
 
 // ── 空中攻撃 ────────────────────────────────────────────────
