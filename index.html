@@ -31,7 +31,8 @@
       <h1 class="logo">2D <span>格闘</span></h1>
       <p class="tagline">先に技を通した方が勝ち。かすっただけで終わります。</p>
       <div class="menu">
-        <button class="btn primary" data-mode="cpu">CPU と対戦</button>
+        <button class="btn primary" data-mode="arcade">アーケード（勝ち抜き）</button>
+        <button class="btn" data-mode="cpu">CPU と対戦</button>
         <button class="btn" data-mode="versus">2人で対戦（同じ端末）</button>
         <button class="btn" data-mode="online">オンライン対戦</button>
       </div>
@@ -48,6 +49,9 @@
           <p><b>しゃがめば魔法使いの照射ビームをくぐれます。</b>ビームはガードできないので、
             しゃがみが唯一の答えです。ただし沈むのにも立つのにも時間がかかるので、
             読んで先に構える必要があります（打撃はしゃがんでも当たります）。</p>
+          <p><b>アーケード</b>は CPU との勝ち抜きです。相手はランダムに並び、
+            <b>一度当たった相手とは二度と当たりません</b>。最大 10 戦、
+            <b>一度でも負けたらゲームオーバー</b>で最初からです。</p>
           <p>照射は撃つまでに <b>1 秒の溜め</b>があり、その間ずっと<b>足元に魔法陣</b>が回ります。
             これが合図なので、見てからしゃがんでも間に合います。
             逆に魔法使いは、その 1 秒まったくの無防備になります。</p>
@@ -112,6 +116,40 @@
       <div class="menu row">
         <button class="btn ghost" id="online-back">もどる</button>
         <button class="btn primary" id="online-connect">接続</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- アーケード: 次の相手 -->
+  <section class="screen" id="screen-arcade">
+    <div class="panel">
+      <p class="arcade-step" id="arcade-step"></p>
+      <h2 class="select-title" id="arcade-headline">次の相手</h2>
+      <div class="arcade-foe">
+        <canvas id="arcade-portrait"></canvas>
+        <div class="arcade-foe-text">
+          <div class="arcade-name" id="arcade-name"></div>
+          <div class="arcade-sub" id="arcade-sub"></div>
+        </div>
+      </div>
+      <div class="arcade-track" id="arcade-track"></div>
+      <div class="menu">
+        <button class="btn primary" id="arcade-next">戦う</button>
+        <button class="btn ghost" id="arcade-quit">タイトルへ</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- アーケード: ゲームオーバー / 全制覇 -->
+  <section class="screen" id="screen-arcade-end">
+    <div class="panel">
+      <h2 class="result-title" id="arcade-end-title">ゲームオーバー</h2>
+      <p class="result-score" id="arcade-end-score"></p>
+      <div class="arcade-track" id="arcade-end-track"></div>
+      <div class="menu">
+        <button class="btn primary" id="arcade-again">最初から</button>
+        <button class="btn" id="arcade-end-select">キャラ選択へ</button>
+        <button class="btn ghost" id="arcade-end-title-btn">タイトルへ</button>
       </div>
     </div>
   </section>

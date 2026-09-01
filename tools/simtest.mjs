@@ -4029,6 +4029,50 @@ section('CPU の飛び道具への対応');
   check('弾が間近なら2段目を出して避けようとする', airJumped, `lastAct=${cpu.lastAct}`);
 }
 
+// ── アーケード（勝ち抜き） ──────────────────────────────────
+// 順番の決め方だけを見る。試合そのものは動かさない。
+section('アーケードの組み合わせ');
+{
+  const { ArcadeRun, MAX_BATTLES } = await import('../src/game/arcade.js');
+
+  // シードを変えて何度引いても、同じ相手が二度出てこないこと
+  let dupSeed = -1;
+  let shortSeed = -1;
+  for (let seed = 1; seed <= 200 && dupSeed < 0 && shortSeed < 0; seed += 1) {
+    const run = new ArcadeRun('swordsman', CHARACTER_IDS, seed);
+    if (new Set(run.order).size !== run.order.length) dupSeed = seed;
+    if (run.total !== Math.min(MAX_BATTLES, CHARACTER_IDS.length)) shortSeed = seed;
+  }
+  check('一度当たった相手とは二度と当たらない', dupSeed < 0, `seed=${dupSeed}`);
+  check('上限まで戦える', shortSeed < 0, `seed=${shortSeed}`);
+
+  // 並びがシードで変わる（毎回同じ順番だと「ランダム」にならない）
+  const orders = new Set(
+    Array.from({ length: 30 }, (_, i) => new ArcadeRun('swordsman', CHARACTER_IDS, i + 1).order.join(','))
+  );
+  check('引くたびに並びが変わる', orders.size > 20, `${orders.size}/30 通り`);
+
+  // 同じシードなら同じ並び（不具合を再現できるように）
+  check(
+    'シードが同じなら並びも同じ',
+    new ArcadeRun('mage', CHARACTER_IDS, 7).order.join() ===
+      new ArcadeRun('mage', CHARACTER_IDS, 7).order.join()
+  );
+
+  const run = new ArcadeRun('swordsman', CHARACTER_IDS, 12345);
+  check('最初は1戦目', run.battleNo === 1 && run.index === 0 && !run.isClear);
+  const first = run.opponent;
+  check('相手はロスターの誰か', CHARACTER_IDS.includes(first));
+  run.win();
+  check('倒した相手は控えに回る', run.defeated.join() === first && run.opponent !== first);
+
+  // 全部倒し切ると全制覇。勝ち続けたぶんだけ index が進む
+  let cleared = false;
+  for (let i = 1; i < run.total && !cleared; i += 1) cleared = run.win();
+  check('全部倒すと全制覇になる', cleared && run.isClear && run.opponent === null);
+  check('全制覇後にさらに勝っても進まない', run.win() && run.index === run.total);
+}
+
 // ── 技データとアトラスの噛み合わせ ──────────────────────────
 // キャラ定義が指しているアニメ名が、実際に配られているアトラスに載っているか。
 // シートを差し替えたときにここがずれると、絵が出ないか一枚も描かれないまま

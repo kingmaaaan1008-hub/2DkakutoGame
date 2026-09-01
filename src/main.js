@@ -15,9 +15,11 @@ import {
 } from './game/characters/index.js';
 import { Simulation } from './game/sim.js';
 import { CpuController } from './game/ai.js';
+import { ArcadeRun } from './game/arcade.js';
 import { Renderer } from './render/renderer.js';
 import { Hud } from './render/hud.js';
 import { ScreenManager, CharacterSelect } from './ui/screens.js';
+import { drawStillFrame } from './render/spritebank.js';
 import { LocalSession, LockstepSession } from './net/session.js';
 import { WebSocketTransport } from './net/transport.js';
 
@@ -37,6 +39,16 @@ const dom = {
   onlineStatus: $('online-status'),
   resultTitle: $('result-title'),
   resultScore: $('result-score'),
+  arcadeStep: $('arcade-step'),
+  arcadeHeadline: $('arcade-headline'),
+  arcadePortrait: $('arcade-portrait'),
+  arcadeName: $('arcade-name'),
+  arcadeSub: $('arcade-sub'),
+  arcadeTrack: $('arcade-track'),
+  arcadeNext: $('arcade-next'),
+  arcadeEndTitle: $('arcade-end-title'),
+  arcadeEndScore: $('arcade-end-score'),
+  arcadeEndTrack: $('arcade-end-track'),
   hudOverlay: $('hud-overlay'),
   netStatus: $('net-status'),
   touch: $('touch'),
@@ -55,6 +67,8 @@ const app = {
   sim: null,
   session: null,
   cpu: null,
+  /** アーケード中だけ入る ArcadeRun。それ以外は null。 */
+  arcade: null,
   mode: 'cpu',
   characters: ['swordsman', 'berserker'],
   labels: ['1P', '2P'],
@@ -132,6 +146,13 @@ function wireMenus() {
   $('online-back').addEventListener('click', () => app.screens.show('screen-title'));
   $('online-connect').addEventListener('click', connectOnline);
 
+  $('arcade-next').addEventListener('click', startArcadeBattle);
+  $('arcade-quit').addEventListener('click', goTitle);
+  // ゲームオーバーからは同じキャラで引き直す（相手の並びは新しく引き直される）
+  $('arcade-again').addEventListener('click', () => startArcadeRun(app.arcade.playerId));
+  $('arcade-end-select').addEventListener('click', () => startModeSelect('arcade'));
+  $('arcade-end-title-btn').addEventListener('click', goTitle);
+
   $('result-rematch').addEventListener('click', () => startMatch());
   $('result-select').addEventListener('click', () => startModeSelect(app.mode));
   $('result-title-btn').addEventListener('click', goTitle);
@@ -169,6 +190,11 @@ function startModeSelect(mode) {
   app.mode = mode;
   app.screens.show('screen-select');
 
+  if (mode === 'arcade') {
+    app.select.start(1, ['あなた'], (picks) => startArcadeRun(picks[0]), goTitle);
+    return;
+  }
+
   if (mode === 'online') {
     app.select.start(
       1,
@@ -200,6 +226,7 @@ function goTitle() {
   app.session?.dispose();
   app.session = null;
   app.sim = null;
+  app.arcade = null;
   setPaused(false);
   dom.hudOverlay.classList.add('hidden');
   dom.touch.classList.add('hidden');
@@ -214,10 +241,10 @@ function startMatch() {
   const seed = (Math.random() * 0xffffffff) >>> 0;
   app.sim = new Simulation({ characters: app.characters, seed });
 
-  if (app.mode === 'cpu') {
+  if (app.mode === 'cpu' || app.mode === 'arcade') {
     app.input.solo = true;
     // 難易度は ai.js の DIFFICULTY にある easy / normal / hard から選ぶ。
-    // 手応えを出したいので hard を既定にしている。
+    // 手応えを出したいので、単発の CPU 戦もアーケードも hard で通す。
     app.cpu = new CpuController(1, 'hard');
     app.session = new LocalSession(app.sim, (sim) => app.cpu.think(sim));
   } else {
@@ -239,6 +266,165 @@ function enterGame() {
   dom.netStatus.textContent = '';
   resizeCanvas();
   app.loop.start();
+}
+
+// ── アーケード（勝ち抜き） ─────────────────────────────────
+
+/**
+ * 勝ち抜きを始める。相手の並びはここで一度だけ決まり、
+ * 全制覇するかゲームオーバーになるまで引き直されない
+ * （＝一度当たった相手とは二度と当たらない）。
+ */
+function startArcadeRun(playerId) {
+  app.mode = 'arcade';
+  app.arcade = new ArcadeRun(playerId, CHARACTER_IDS);
+  showArcadeNext();
+}
+
+/** 「次の相手」画面のいまの相手と、そこから 1 戦始める。 */
+function startArcadeBattle() {
+  stopArcadeIntro();
+  app.characters = [app.arcade.playerId, app.arcade.opponent];
+  // 相手の名前をそのまま体力ゲージに出す（誰と戦っているかが試合中も分かる）
+  app.labels = ['YOU', getCharacter(app.arcade.opponent).name];
+  startMatch();
+}
+
+/** 1 戦の決着をアーケードの進行に反映する。 */
+function resolveArcadeMatch() {
+  // 引き分け（時間切れで取得ラウンドが並んだ場合）も勝ち抜けにはしない
+  if (app.sim.matchWinner !== 0) {
+    showArcadeEnd(false);
+    return;
+  }
+  if (app.arcade.win()) showArcadeEnd(true);
+  else showArcadeNext();
+}
+
+/** 次の相手の紹介画面。 */
+function showArcadeNext() {
+  const run = app.arcade;
+  const foe = getCharacter(run.opponent);
+  dom.arcadeStep.textContent = `${run.battleNo} 戦目 / 全 ${run.total} 戦`;
+  dom.arcadeHeadline.textContent = run.index === 0 ? '最初の相手' : '次の相手';
+  dom.arcadeName.textContent = foe.name;
+  dom.arcadeSub.textContent =
+    run.playerId === foe.id ? `${foe.subtitle} ── 同キャラ対決` : foe.subtitle;
+  drawArcadeTrack(dom.arcadeTrack, run, -1);
+  app.screens.show('screen-arcade');
+  startArcadeIntro(foe.id, run.battleNo === run.total ? '最後の相手と戦う' : '戦う');
+}
+
+/** ゲームオーバー / 全制覇の画面。 */
+function showArcadeEnd(cleared) {
+  const run = app.arcade;
+  const me = getCharacter(run.playerId).name;
+  dom.arcadeEndTitle.textContent = cleared ? '全制覇！' : 'ゲームオーバー';
+  dom.arcadeEndScore.textContent = cleared
+    ? `${me} で全 ${run.total} 人を撃破`
+    : `${me} で ${run.index} 人抜き（${run.battleNo} 戦目で敗退）`;
+  drawArcadeTrack(dom.arcadeEndTrack, run, cleared ? -1 : run.index);
+  app.screens.show('screen-arcade-end');
+}
+
+/**
+ * 勝ち抜きの札を並べる。
+ * 倒した相手だけ名前を出し、これから当たる相手は「？」のままにしておく
+ * （並びがランダムなのが売りなので、先が見えると引きが弱くなる）。
+ * @param {number} lostAt 敗れた相手の位置（0始まり）。なければ -1
+ */
+function drawArcadeTrack(root, run, lostAt) {
+  root.innerHTML = '';
+  run.order.forEach((id, i) => {
+    const el = document.createElement('span');
+    if (i < run.index) {
+      el.className = 'is-done';
+      el.textContent = getCharacter(id).name;
+    } else if (i === lostAt) {
+      el.className = 'is-lost';
+      el.textContent = getCharacter(id).name;
+    } else if (i === run.index) {
+      el.className = 'is-now';
+      el.textContent = getCharacter(id).name;
+    } else {
+      el.textContent = `${i + 1}`;
+    }
+    root.appendChild(el);
+  });
+}
+
+/**
+ * 相手の紹介。立ち絵の待機モーションと、自動で試合が始まるまでの秒読みを回す。
+ *
+ * 秒読みを setTimeout ではなく描画のフレームで数えているのは、
+ * **裏に回っている間は進めたくない**から。ブラウザは見えていないタブの
+ * requestAnimationFrame を止めるので、他の画面を見ている隙に試合が始まって
+ * 1 戦目から死んでいた、が起きない。戻ってくれば続きから数え直す。
+ */
+const ARCADE_INTRO_SECONDS = 5;
+
+let introRaf = 0;
+let introId = null;
+let introLabel = '戦う';
+let introStart = 0;
+
+function startArcadeIntro(id, label) {
+  introId = id;
+  introLabel = label;
+  introStart = 0; // 最初のフレームで now を入れる（この時点の時計とはズレるため）
+  // 1 フレーム目まで前の相手のときの秒数が残らないよう、先に書いておく
+  dom.arcadeNext.textContent = `${label}（${ARCADE_INTRO_SECONDS}）`;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const canvas = dom.arcadePortrait;
+  canvas.width = 128 * dpr;
+  canvas.height = 150 * dpr;
+  if (!introRaf) introRaf = requestAnimationFrame(tickArcadeIntro);
+}
+
+function stopArcadeIntro() {
+  if (introRaf) cancelAnimationFrame(introRaf);
+  introRaf = 0;
+}
+
+function tickArcadeIntro(now) {
+  if (app.screens.current !== 'screen-arcade') {
+    introRaf = 0;
+    return;
+  }
+  introRaf = requestAnimationFrame(tickArcadeIntro);
+  if (!introStart) introStart = now;
+
+  drawArcadePortrait(now);
+
+  const left = ARCADE_INTRO_SECONDS - (now - introStart) / 1000;
+  if (left <= 0) {
+    startArcadeBattle();
+    return;
+  }
+  dom.arcadeNext.textContent = `${introLabel}（${Math.ceil(left)}）`;
+}
+
+/** 立ち絵。キャラ選択のサムネイルと同じで待機モーションを回す。 */
+function drawArcadePortrait(now) {
+  const sprite = app.sprites?.[introId];
+  if (!sprite) return;
+  const canvas = dom.arcadePortrait;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const W = canvas.width / dpr;
+  const H = canvas.height / dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const cell = sprite.animations.idle;
+  drawStillFrame(
+    ctx,
+    sprite,
+    'idle',
+    Math.floor(now / 110) % cell.frames,
+    W / 2,
+    H - 6,
+    (H - 16) / sprite.height
+  );
 }
 
 // ── オンライン ─────────────────────────────────────────────
@@ -329,6 +515,8 @@ function render() {
 
 function setPaused(on) {
   if (app.mode === 'online' && on) return; // オンラインは止められない
+  // アーケードは負けたら終わりなので、やり直しで敗北をなかったことにはさせない
+  $('pause-restart').hidden = app.mode === 'arcade';
   app.paused = on;
   app.screens.overlay('screen-pause', on);
   if (on) app.input.reset();
@@ -337,14 +525,20 @@ function setPaused(on) {
 function showResult() {
   app.resultShown = true;
   app.loop.stop();
+  dom.hudOverlay.classList.add('hidden');
+  dom.touch.classList.add('hidden');
+
+  if (app.mode === 'arcade') {
+    resolveArcadeMatch();
+    return;
+  }
+
   const winner = app.sim.matchWinner;
   dom.resultTitle.textContent =
     winner >= 0 ? `${app.labels[winner]} の勝ち` : '引き分け';
   const [a, b] = app.sim.wins;
   dom.resultScore.textContent =
     `${getCharacter(app.characters[0]).name} ${a} - ${b} ${getCharacter(app.characters[1]).name}`;
-  dom.hudOverlay.classList.add('hidden');
-  dom.touch.classList.add('hidden');
   app.screens.show('screen-result');
   // オンラインは同じ相手との再戦に別途やり取りが要るので、いったん切る
   if (app.mode === 'online') {
