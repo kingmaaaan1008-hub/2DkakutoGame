@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="theme-color" content="#0d1020">
+<meta name="theme-color" content="#06070d">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>一発当たったら即死な2D格闘</title>
@@ -17,81 +17,162 @@
   <!-- 読み込み -->
   <section class="screen is-active" id="screen-loading">
     <div class="panel">
-      <p class="logo-lead">一発当たったら<span>即死</span>な</p>
-      <h1 class="logo">2D <span>格闘</span></h1>
+      <div class="logo-wrap">
+        <p class="logo-lead">一発当たったら<span>即死</span>な</p>
+        <h1 class="logo">2D <span>格闘</span></h1>
+      </div>
       <p class="loading-text" id="loading-text">読み込み中…</p>
       <div class="loading-bar"><div id="loading-fill"></div></div>
     </div>
   </section>
 
-  <!-- タイトル / モード選択 -->
+  <!--
+    タイトル。
+    細かいルールと操作は「遊び方」（#screen-howto）へ追い出してあり、
+    ここはロゴとモード選択だけに絞っている。
+  -->
   <section class="screen" id="screen-title">
     <div class="panel">
-      <p class="logo-lead">一発当たったら<span>即死</span>な</p>
-      <h1 class="logo">2D <span>格闘</span></h1>
-      <p class="tagline">先に技を通した方が勝ち。かすっただけで終わります。</p>
-      <div class="menu">
-        <button class="btn primary" data-mode="arcade">アーケード（勝ち抜き）</button>
-        <button class="btn" data-mode="cpu">CPU と対戦</button>
-        <button class="btn" data-mode="versus">2人で対戦（同じ端末）</button>
-        <button class="btn" data-mode="online">オンライン対戦</button>
+      <!-- 横持ちスマホでは .title-grid が左右 2 段組みに変わる（styles.css 側） -->
+      <div class="title-grid">
+        <div>
+          <div class="logo-wrap">
+            <p class="logo-lead">一発当たったら<span>即死</span>な</p>
+            <h1 class="logo">2D <span>格闘</span></h1>
+          </div>
+          <p class="tagline">先に技を通した方が勝ち。かすっただけで終わります。</p>
+        </div>
+        <div>
+          <p class="eyebrow">MODE SELECT</p>
+          <div class="menu modes">
+            <button class="btn primary" data-mode="arcade">アーケード（勝ち抜き）</button>
+            <button class="btn" data-mode="cpu">CPU と対戦</button>
+            <button class="btn" data-mode="versus">2人で対戦（同じ端末）</button>
+            <button class="btn" data-mode="online">オンライン対戦</button>
+          </div>
+          <div class="title-foot">
+            <button class="btn link" id="title-howto">遊び方を見る</button>
+          </div>
+        </div>
       </div>
-      <details class="help" open>
-        <summary>ルール</summary>
-        <div class="help-body">
-          <p><b>攻撃が当たったらその時点で負けです。</b>多段技なら 1 打目でも最終打でも同じ。
-            かすった瞬間に体力は全部消えます。</p>
-          <p>連続ヒット技は、当たった数だけ被弾モーションが続きます。
-            <b>コンボが途切れたところで倒れます。</b></p>
-          <p><b>ガードは通ります。</b>ただし<b>スキル</b>はガードごと崩すので、守り一辺倒では勝てません。</p>
-          <p>避ける手段は <b>2段ジャンプ</b>・<b>しゃがみ</b>・ダッシュ・ガードの4つ。
-            <b>ジャンプ中も攻撃とスキルが出せます。</b></p>
-          <p><b>しゃがめば魔法使いの照射ビームをくぐれます。</b>ビームはガードできないので、
-            しゃがみが唯一の答えです。ただし沈むのにも立つのにも時間がかかるので、
-            読んで先に構える必要があります（打撃はしゃがんでも当たります）。</p>
-          <p><b>アーケード</b>は CPU との勝ち抜きです。相手はランダムに並び、
-            <b>一度当たった相手とは二度と当たりません</b>。最大 10 戦、
-            <b>一度でも負けたらゲームオーバー</b>で最初からです。</p>
-          <p>照射は撃つまでに <b>1 秒の溜め</b>があり、その間ずっと<b>足元に魔法陣</b>が回ります。
-            これが合図なので、見てからしゃがんでも間に合います。
-            逆に魔法使いは、その 1 秒まったくの無防備になります。</p>
-        </div>
-      </details>
-      <details class="help">
-        <summary>操作方法</summary>
-        <div class="help-body">
-          <p><b>スマホ</b>: 画面を左右に割ってスワイプで操作します。ボタンはありません。</p>
-          <p><b>画面左半分 = 移動</b>。横スワイプで移動し、<b>小さく弾けば歩き・大きく弾けば走り</b>。
-            弾いた指をそのまま引き伸ばしても走りに変わります。
-            斜め上で<b>斜めジャンプ</b>、真上で<b>垂直ジャンプ</b>、下で<b>しゃがみ</b>。
-            <b>指を触れている間その入力が続きます</b>（離すと止まる）。</p>
-          <p><b>空中では、どの向きへスワイプしても 2段ジャンプ</b>になります。
-            横へ弾けばその方向へ跳ぶので、真上を狙う必要はありません
-            （空中では横入力で速度が変わらないため、移動手段はジャンプだけです）。</p>
-          <p><b>画面右半分 = 攻撃</b>。<b>タップで攻撃</b>、
-            <b>相手のいる方へフリックでスキル</b>、<b>下へフリックでガード</b>（指を離すまでガード継続）。</p>
-          <p>左右は同時に使えます。左の親指で走りながら右の親指で技を出せます。</p>
-          <p><b>1P キーボード</b>: A / D 移動、W ジャンプ、S しゃがみ、J 攻撃、K スキル、L ガード</p>
-          <p><b>2P キーボード</b>: ← / → 移動、↑ ジャンプ、↓ しゃがみ、, 攻撃、. スキル、/ ガード</p>
-          <p><b>ゲームパッド</b>: スティック・十字キー移動（下でしゃがみ）、A 攻撃、X スキル、B ガード、Y ジャンプ</p>
-          <p>歩き中は常に相手を向きます。同じ方向を2回押すとダッシュ（向いた方向へ走る）。</p>
-          <p><b>空中で攻撃 / スキル</b>を押すと、それぞれ専用の空中技が出ます。
-            剣士と狂戦士の空中スキルは斜め下へ落ちる大技で、外すと着地の隙が大きくなります。
-            魔法使いは空中で止まって照射するので、<b>撃つ高さ</b>で地上を薙ぐか対空にするかが決まります。</p>
-        </div>
-      </details>
     </div>
   </section>
 
-  <!-- キャラクター選択 -->
+  <!--
+    遊び方。タブと「もどる」は動かさず、本文だけを縦に流す。
+  -->
+  <section class="screen" id="screen-howto">
+    <div class="panel wide panel-flex">
+      <header class="panel-head">
+        <h2 class="select-title">遊び方</h2>
+        <nav class="howto-tabs">
+          <button class="tab is-active" type="button" data-howto="rule">ルール</button>
+          <button class="tab" type="button" data-howto="control">操作方法</button>
+        </nav>
+      </header>
+
+      <div class="doc-scroll">
+        <div class="doc" data-howto-page="rule">
+          <h3>一撃で決まる</h3>
+          <p class="key"><b>攻撃が当たったらその時点で負けです。</b>多段技なら 1 打目でも最終打でも同じ。かすった瞬間に体力は全部消えます。</p>
+          <p>連続ヒット技は、当たった数だけ被弾モーションが続きます。
+            <b>コンボが途切れたところで倒れます。</b>
+            4 段技が全部当たれば「4 HITS」まで見えてから崩れ落ちます。</p>
+          <p>決着が一瞬なので、1 ラウンド 45 秒・<b>3 本先取</b>です。</p>
+
+          <h3>守りと崩し</h3>
+          <p><b>ガードは通ります。</b>ただし<b>スキル</b>はガードごと崩すので、守り一辺倒では勝てません。</p>
+          <p>避ける手段は <b>2段ジャンプ</b>・<b>しゃがみ</b>・<b>ダッシュ</b>・<b>ガード</b> の 4 つ。
+            <b>ジャンプ中も攻撃とスキルが出せます。</b></p>
+          <p>ただし<b>淫魔の吸血とキャヴァリアの串刺しは掴み技</b>で、
+            ガードでは防げない代わりに<b>相手が空中にいると絶対に当たりません</b>。
+            この 2 人が相手のときだけ「固めて待つ」が成立しないので、跳ぶのが答えになります。</p>
+
+          <h3>照射ビームとしゃがみ</h3>
+          <p class="key"><b>しゃがめば魔法使いの照射ビームをくぐれます。</b>ビームはガードできないので、しゃがみが唯一の答えです。</p>
+          <p>ただし沈むのにも立つのにも時間がかかるので、読んで先に構える必要があります
+            （打撃は判定が低いところまで出ているので、しゃがんでも当たります）。</p>
+          <p>照射は撃つまでに <b>1 秒の溜め</b>があり、その間ずっと<b>足元に魔法陣</b>が回ります。
+            これが合図なので、見てからしゃがんでも間に合います。
+            逆に魔法使いは、その 1 秒まったくの無防備になります。</p>
+
+          <h3>アーケード（勝ち抜き）</h3>
+          <p><b>アーケード</b>は CPU との勝ち抜きです。相手はランダムに並び、
+            <b>一度当たった相手とは二度と当たりません</b>。</p>
+          <p>最大 10 戦、<b>一度でも負けたらゲームオーバー</b>で最初からです。</p>
+        </div>
+
+        <div class="doc" data-howto-page="control" hidden>
+          <h3>スマホ ── 画面を左右に割る</h3>
+          <p>ボタンはありません。<b>画面の左半分で動き、右半分で戦います。</b>
+            左右は同時に使えるので、左の親指で走りながら右の親指で技を出せます。</p>
+
+          <h3>左半分 ── 移動</h3>
+          <p>横スワイプで移動し、<b>小さく弾けば歩き・大きく弾けば走り</b>。
+            弾いた指をそのまま引き伸ばしても走りに変わります。
+            斜め上で<b>斜めジャンプ</b>、真上で<b>垂直ジャンプ</b>、下で<b>しゃがみ</b>。
+            <b>指を触れている間その入力が続きます</b>（離すと止まる）。</p>
+          <p class="key"><b>空中では、どの向きへスワイプしても 2段ジャンプ</b>になります。
+            横へ弾けばその方向へ跳ぶので、真上を狙う必要はありません。</p>
+
+          <h3>右半分 ── 攻撃</h3>
+          <p><b>タップで攻撃</b>、<b>相手のいる方へフリックでスキル</b>、
+            <b>下へフリックでガード</b>（指を離すまでガード継続）。</p>
+
+          <h3>キーボード</h3>
+          <dl class="keymap">
+            <dt><kbd>A</kbd><kbd>D</kbd></dt><dd>1P 移動</dd>
+            <dt><kbd>W</kbd> / <kbd>S</kbd></dt><dd>1P ジャンプ / しゃがみ</dd>
+            <dt><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd></dt><dd>1P 攻撃 / スキル / ガード</dd>
+            <dt><kbd>←</kbd><kbd>→</kbd></dt><dd>2P 移動</dd>
+            <dt><kbd>↑</kbd> / <kbd>↓</kbd></dt><dd>2P ジャンプ / しゃがみ</dd>
+            <dt><kbd>,</kbd><kbd>.</kbd><kbd>/</kbd></dt><dd>2P 攻撃 / スキル / ガード</dd>
+            <dt><kbd>Esc</kbd> / <kbd>F1</kbd></dt><dd>ポーズ / 判定ボックス表示</dd>
+          </dl>
+          <p>歩き中は常に相手を向きます。同じ方向を 2 回押すとダッシュ（向いた方向へ走る）。</p>
+
+          <h3>ゲームパッド</h3>
+          <dl class="keymap">
+            <dt><kbd>スティック</kbd></dt><dd>移動（下でしゃがみ）</dd>
+            <dt><kbd>A</kbd> / <kbd>Y</kbd></dt><dd>攻撃 / ジャンプ</dd>
+            <dt><kbd>X</kbd> / <kbd>B</kbd></dt><dd>スキル / ガード</dd>
+          </dl>
+
+          <h3>空中戦</h3>
+          <p><b>空中で攻撃 / スキル</b>を押すと、それぞれ専用の空中技が出ます。
+            剣士と狂戦士の空中スキルは斜め下へ落ちる大技で、外すと着地の隙が大きくなります。</p>
+          <p>魔法使いは空中で止まって照射するので、<b>撃つ高さ</b>で
+            地上を薙ぐか対空にするかが決まります。</p>
+        </div>
+      </div>
+
+      <div class="menu howto-foot">
+        <button class="btn ghost" id="howto-back">もどる</button>
+      </div>
+    </div>
+  </section>
+
+  <!--
+    キャラクター選択。
+    見出し・技の説明・決定ボタンは固定で、**スクロールするのはキャラの並びだけ**。
+    どこまで並びを送っても「決定」が画面から消えない。
+  -->
   <section class="screen" id="screen-select">
-    <div class="panel wide">
-      <h2 class="select-title" id="select-title">1P キャラクター選択</h2>
-      <div class="roster" id="roster"></div>
-      <div class="select-info" id="select-info"></div>
-      <div class="menu row">
-        <button class="btn ghost" id="select-back">もどる</button>
-        <button class="btn primary" id="select-confirm">決定</button>
+    <div class="panel wide panel-flex">
+      <header class="panel-head">
+        <h2 class="select-title" id="select-title">1P キャラクター選択</h2>
+      </header>
+
+      <div class="roster-scroll">
+        <div class="roster" id="roster"></div>
+      </div>
+
+      <div class="select-foot">
+        <div class="select-info" id="select-info"></div>
+        <div class="menu row">
+          <button class="btn ghost" id="select-back">もどる</button>
+          <button class="btn primary" id="select-confirm">決定</button>
+        </div>
       </div>
     </div>
   </section>

@@ -143,6 +143,8 @@ function wireMenus() {
     btn.addEventListener('click', () => startModeSelect(btn.dataset.mode));
   }
 
+  wireHowto();
+
   $('online-back').addEventListener('click', () => app.screens.show('screen-title'));
   $('online-connect').addEventListener('click', connectOnline);
 
@@ -184,6 +186,30 @@ function wireMenus() {
   // 保存しておいた接続先を復元しておくと、再戦のたびに打ち直さずに済む
   dom.onlineUrl.value = localStorage.getItem('kakuto.url') ?? '';
   dom.onlineRoom.value = localStorage.getItem('kakuto.room') ?? '';
+}
+
+/**
+ * 遊び方の画面。タイトルから細かい説明を追い出した先で、
+ * 「ルール」と「操作方法」をタブで切り替えるだけの読み物。
+ */
+function wireHowto() {
+  const tabs = [...document.querySelectorAll('[data-howto]')];
+  const pages = [...document.querySelectorAll('[data-howto-page]')];
+
+  const openPage = (name) => {
+    for (const tab of tabs) tab.classList.toggle('is-active', tab.dataset.howto === name);
+    for (const page of pages) page.hidden = page.dataset.howtoPage !== name;
+    // タブを替えたら先頭から読ませる（前のタブのスクロール位置が残ると迷子になる）
+    document.querySelector('.doc-scroll').scrollTop = 0;
+  };
+
+  for (const tab of tabs) tab.addEventListener('click', () => openPage(tab.dataset.howto));
+
+  $('title-howto').addEventListener('click', () => {
+    openPage('rule');
+    app.screens.show('screen-howto');
+  });
+  $('howto-back').addEventListener('click', () => app.screens.show('screen-title'));
 }
 
 function startModeSelect(mode) {
