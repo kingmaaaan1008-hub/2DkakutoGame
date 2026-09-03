@@ -67,7 +67,11 @@ export class CharacterSelect {
     this._build();
 
     dom.confirm.addEventListener('click', () => this._confirm());
-    dom.back.addEventListener('click', () => this.onCancel?.());
+    dom.back.addEventListener('click', () => {
+      // 止めてから戻す。止め忘れるとサムネイルの再生が裏で回り続ける
+      this.active = false;
+      this.onCancel?.();
+    });
     this._tick = this._tick.bind(this);
   }
 
@@ -120,9 +124,17 @@ export class CharacterSelect {
     this.onCancel = onCancel;
     this.slot = 0;
     this.picks = new Array(slotCount).fill(this.roster[0].id);
-    this.active = true;
     this._refresh();
-    requestAnimationFrame(this._tick);
+
+    /*
+     * サムネイルの再生ループは 1 本だけ。
+     * ここを素通しにすると、選択画面へ入るたびに rAF が 1 本ずつ積み上がり、
+     * 10 体ぶんの描画が二重三重に走ってメニュー全体が重くなる
+     * （タイトル ⇄ 選択 を 4 往復すると 4 倍になっていた）。
+     */
+    const running = this.active;
+    this.active = true;
+    if (!running) requestAnimationFrame(this._tick);
   }
 
   stop() {

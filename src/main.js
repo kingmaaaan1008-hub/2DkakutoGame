@@ -249,6 +249,8 @@ function startModeSelect(mode) {
 
 function goTitle() {
   app.loop?.stop();
+  // 見えていないサムネイルを回し続けない
+  app.select?.stop();
   app.session?.dispose();
   app.session = null;
   app.sim = null;
