@@ -161,12 +161,10 @@ html, body {
 /* ── ロゴ ─────────────────────────────────────────────── */
 
 /*
- * ロゴは 3 段の組み。
- *   1) 前置き「一発当たったら即死な」── 小さく広く。ここが題名の頭に繋がる
- *   2) 主役「格闘」── 鋼の階調＋赤い押し出し＋太い黒縁。「2D」は赤い札に逃がして、
- *      大きさを主役に全部渡している
- *   3) 英字の副題 ── 金の細線で挟んで座りを作る
- * 色は鋼と赤の 2 つだけ。前の版は金と赤で主役が割れていた。
+ * ロゴは前置きと本題の 2 段だけ。
+ * 「一発当たったら即死な」→「2D 格闘」と続けて読ませたいので、
+ * **同じ組み方のまま大きさだけ変える**（字送りも揃える）。
+ * 縁取りや金属の階調は付けない。白 1 色で十分読める。
  */
 .logo-wrap { text-align: center; margin-bottom: 20px; }
 
@@ -176,7 +174,7 @@ html, body {
   letter-spacing: 0.22em;
   text-indent: 0.22em;
   color: #98a3c0;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 .logo-lead span {
   color: #ff5757;
@@ -185,87 +183,13 @@ html, body {
 }
 
 .logo {
-  position: relative;
-  isolation: isolate;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.14em;
-  font-size: clamp(42px, 10.5vw, 78px);
-  line-height: 1;
-  /* 押し出しの影が行の外へ出るぶん、下に場所を空けておく */
-  padding-bottom: 0.16em;
-}
-/*
- * 字の後ろに広げると滲んで見えるので、赤は足元にだけ薄く敷く。
- * 鋼の字が板から浮いて見えれば十分。
- */
-.logo::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  left: 14%; right: 14%;
-  bottom: 4%;
-  height: 42%;
-  background: radial-gradient(ellipse at 50% 100%, rgba(214, 30, 42, 0.42), rgba(214, 30, 42, 0) 72%);
-  filter: blur(9px);
-}
-
-/* 「2D」は赤い札に逃がす。主役と同じ大きさで並べると両方とも弱くなる */
-.logo i {
-  font-size: 0.33em;
-  font-style: italic;
-  font-weight: 900;
-  letter-spacing: 0.06em;
-  color: #fff;
-  background: linear-gradient(180deg, #ff5a4a, #b7121a);
-  padding: 0.3em 0.55em 0.32em;
-  clip-path: polygon(0.34em 0, 100% 0, calc(100% - 0.34em) 100%, 0 100%);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-}
-
-/* 鋼。上から白→鈍色→白と返して、真ん中に暗い帯を通すと金属に見える */
-.logo b {
-  font-weight: 900;
-  font-style: italic;
-  letter-spacing: 0.06em;
-  text-indent: 0.06em;
-  background: linear-gradient(178deg, #ffffff 0%, #ffffff 46%, #e3eaff 62%, #b9c7ec 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  -webkit-text-stroke: 0.032em #d81824;
-  paint-order: stroke fill;
-  /*
-   * 影は**きつく短く**。漢字は画と画の隙間が狭いので、ぼかした影を落とすと
-   * 隙間が全部埋まって、遠目には字全体が黒い塊に見えてしまう
-   * （押し出しを付けたときも同じ理由で潰れた）。
-   */
-  text-shadow: none;
-}
-
-/* 英字の副題。金の細線で挟んで、ロゴの下辺をきちんと締める */
-.logo-sub {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  margin-top: 9px;
-  font-size: clamp(9px, 1.9vw, 11px);
+  font-size: clamp(34px, 8.4vw, 60px);
   font-weight: 800;
-  letter-spacing: 0.4em;
-  text-indent: 0.4em;
-  /* 折り返すと左右の細線が宙に浮くので、1 行に固定して線の方を縮めさせる */
-  white-space: nowrap;
-  color: var(--accent-2);
+  line-height: 1.1;
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;
+  color: #fff;
 }
-.logo-sub::before, .logo-sub::after {
-  content: "";
-  height: 1px;
-  width: clamp(24px, 11vw, 84px);
-  background: linear-gradient(90deg, rgba(255, 203, 70, 0), var(--accent-2));
-}
-.logo-sub::after { transform: scaleX(-1); }
 
 .tagline, .loading-text {
   text-align: center;
@@ -742,7 +666,7 @@ kbd {
 @media (max-height: 560px) {
   .panel { padding: 16px 18px; }
   .panel-flex { padding: 12px 16px 12px; }
-  .logo { font-size: clamp(32px, 7vw, 50px); }
+  .logo { font-size: clamp(30px, 6.6vw, 46px); }
   .logo-wrap { margin-bottom: 10px; }
   .tagline, .loading-text { margin-bottom: 12px; }
   .btn { padding: 11px 18px; font-size: 14px; }
@@ -776,9 +700,8 @@ kbd {
 @media (max-height: 430px) {
   .panel { padding: 14px 16px; }
   .panel-flex { padding: 10px 14px 10px; }
-  .logo { font-size: clamp(30px, 6.4vw, 44px); }
-  .logo-lead { font-size: 11px; margin-bottom: 5px; }
-  .logo-sub { margin-top: 7px; letter-spacing: 0.26em; text-indent: 0.26em; gap: 8px; }
+  .logo { font-size: clamp(26px, 5.6vw, 38px); }
+  .logo-lead { font-size: 11px; margin-bottom: 4px; }
   .logo-wrap { margin-bottom: 8px; }
   .tagline, .loading-text { font-size: 12px; margin-bottom: 8px; }
   .eyebrow { margin-bottom: 7px; }
@@ -801,7 +724,7 @@ kbd {
     gap: 26px;
   }
   .title-grid > * { flex: 1 1 0; min-width: 0; }
-  .logo { font-size: clamp(32px, 5.4vw, 52px); }
+  .logo { font-size: clamp(30px, 5vw, 48px); }
   .logo-wrap { margin-bottom: 10px; }
   .tagline { margin-bottom: 0; }
 }
