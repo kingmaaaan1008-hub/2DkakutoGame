@@ -203,19 +203,26 @@
   <!-- アーケード: 次の相手 -->
   <section class="screen" id="screen-arcade">
     <div class="panel">
-      <p class="arcade-step" id="arcade-step"></p>
-      <h2 class="select-title" id="arcade-headline">次の相手</h2>
-      <div class="arcade-foe">
-        <canvas id="arcade-portrait"></canvas>
-        <div class="arcade-foe-text">
-          <div class="arcade-name" id="arcade-name"></div>
-          <div class="arcade-sub" id="arcade-sub"></div>
+      <!-- 横持ちでは .arcade-grid が「相手の紹介 | 進み具合＋ボタン」の 2 段組みに変わる -->
+      <div class="arcade-grid">
+        <div>
+          <p class="arcade-step" id="arcade-step"></p>
+          <h2 class="select-title" id="arcade-headline">次の相手</h2>
+          <div class="arcade-foe">
+            <canvas id="arcade-portrait"></canvas>
+            <div class="arcade-foe-text">
+              <div class="arcade-name" id="arcade-name"></div>
+              <div class="arcade-sub" id="arcade-sub"></div>
+            </div>
+          </div>
         </div>
-      </div>
-      <div class="arcade-track" id="arcade-track"></div>
-      <div class="menu">
-        <button class="btn primary" id="arcade-next">戦う</button>
-        <button class="btn ghost" id="arcade-quit">タイトルへ</button>
+        <div>
+          <div class="arcade-track" id="arcade-track"></div>
+          <div class="menu">
+            <button class="btn primary" id="arcade-next">戦う</button>
+            <button class="btn ghost" id="arcade-quit">タイトルへ</button>
+          </div>
+        </div>
       </div>
     </div>
   </section>

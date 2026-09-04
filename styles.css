@@ -239,7 +239,8 @@ html, body {
 }
 .panel-head .select-title { text-align: left; }
 /* 板の直下に置かれた見出しは、次の要素との間を自分で空ける */
-.panel > .select-title { margin-bottom: 12px; }
+.panel > .select-title,
+.arcade-grid > div > .select-title { margin-bottom: 12px; }
 
 .note { color: var(--muted); font-size: 13px; line-height: 1.75; margin: 14px 0 16px; }
 .note code { background: rgba(255, 255, 255, 0.08); padding: 1px 5px; }
@@ -661,8 +662,14 @@ kbd {
   /* 一言説明は横持ちでも残す。1 行ぶんなので、字だけ詰めれば収まる */
   .card .cname { font-size: 13px; }
   .card .csub { font-size: 9.5px; margin-top: 1px; line-height: 1.3; }
-  .arcade-foe { margin: 8px 0; }
+  /* 相手の顔は縦を一番食う。横持ちではひと回り小さくする */
+  .arcade-foe { margin: 8px 0; padding: 8px 12px; gap: 10px; }
+  .arcade-foe canvas { width: 76px; }
+  .arcade-name { font-size: 18px; }
+  .arcade-sub { font-size: 11px; line-height: 1.4; margin-top: 2px; }
+  .arcade-step { font-size: 11px; }
   .arcade-track { margin-bottom: 10px; }
+  .arcade-track span { font-size: 10px; padding: 2px 7px; }
   .howto-tabs { margin-top: 8px; }
   .title-foot { margin-top: 8px; }
 }
@@ -670,6 +677,27 @@ kbd {
 /* 横持ちは縦が足りないので、決定ボタンを低くしてキャラの並びに高さを回す。 */
 @media (max-height: 560px) and (min-width: 640px) {
   .select-foot .menu.row .btn { padding: 9px 10px; font-size: 13px; }
+}
+
+/*
+ * アーケードの「次の相手」。横持ちだと 縦積みでは必ず溢れてスクロールが出るので、
+ * 相手の紹介と「進み具合＋ボタン」を左右に分ける。高い方の段でも収まる。
+ * 幅 560px から掛けるのは SE の横向き（568px）を拾うため。
+ */
+@media (max-height: 560px) and (min-width: 560px) {
+  #screen-arcade .panel { width: min(760px, 100%); }
+  .arcade-grid {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+  .arcade-grid > * { flex: 1 1 0; min-width: 0; }
+  /* 左右に分けると縦が余る。相手の顔は縦持ちと同じ大きさに戻す */
+  .arcade-foe { margin-bottom: 0; padding: 10px 14px; gap: 14px; }
+  .arcade-foe canvas { width: 96px; }
+  /* 段が狭い端末（SE の横向きなど）で「キャヴァリア」が折り返さない大きさまで落とす */
+  .arcade-name { font-size: clamp(15px, 2.6vw, 20px); }
+  .arcade-track { margin-bottom: 12px; }
 }
 
 /*
@@ -689,6 +717,10 @@ kbd {
   .btn.link { padding: 5px 10px; font-size: 12px; }
   .title-foot { margin-top: 6px; }
   .tab { padding: 8px; }
+  /* 結果とアーケード終了は札とボタンが縦に積まるので、見出しから削る */
+  .result-title { font-size: clamp(24px, 5.4vw, 32px); }
+  .result-score { font-size: 12px; margin-bottom: 12px; }
+  .arcade-track { margin-bottom: 8px; }
 }
 
 /*
