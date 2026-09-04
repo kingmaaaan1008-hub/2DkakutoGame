@@ -30,7 +30,6 @@ const dom = {
   loadingText: $('loading-text'),
   loadingFill: $('loading-fill'),
   roster: $('roster'),
-  selectInfo: $('select-info'),
   selectTitle: $('select-title'),
   selectConfirm: $('select-confirm'),
   selectBack: $('select-back'),
@@ -123,7 +122,6 @@ async function boot() {
   app.select = new CharacterSelect(
     {
       root: dom.roster,
-      info: dom.selectInfo,
       title: dom.selectTitle,
       confirm: dom.selectConfirm,
       back: dom.selectBack,

@@ -104,7 +104,7 @@ const SLAM_BOX = { x: 6, y: -16, w: 184, h: 188 };
 export default {
   id: 'maid',
   name: '戦闘メイド',
-  subtitle: '圧殺型 / 大包丁と天空斬り',
+  subtitle: '圧殺・パワー',
   themeColor: '#c0392f',
 
   health: 1000,
@@ -127,7 +127,7 @@ export default {
     crouch: 'crouch',
     hurt: 'hurt',
     death: 'death',
-    /** 掴まれている姿。全キャラが持つ（淫魔とキャヴァリアの掴みのため）。 */
+    /** 掴まれている姿。全キャラが持つ（サキュバスとキャヴァリアの掴みのため）。 */
     grabbed: 'grabbed',
   },
 

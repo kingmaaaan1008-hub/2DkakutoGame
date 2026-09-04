@@ -18,7 +18,7 @@ const HEIGHT = 200;
 export default {
   id: 'schoolgirl',
   name: '女子高生',
-  subtitle: '設置型 / レーザーと彼氏',
+  subtitle: 'スマホと彼氏',
   themeColor: '#ff6fd0',
 
   health: 1000,
@@ -42,7 +42,7 @@ export default {
     crouch: 'crouch',
     hurt: 'hurt',
     death: 'death2',
-    /** 掴まれている姿。淫魔の吸血に捕らえられたときに使う。 */
+    /** 掴まれている姿。サキュバスの吸血に捕らえられたときに使う。 */
     grabbed: 'grabbed',
   },
 

@@ -972,8 +972,8 @@ section('女子高生');
     `最終=${ages[ages.length - 1]}`);
 }
 
-// ── 淫魔（飛行） ────────────────────────────────────────────
-section('淫魔の飛行');
+// ── サキュバス（飛行） ────────────────────────────────────────────
+section('サキュバスの飛行');
 {
   // 1・2段目は他のキャラと同じ跳び上がり。3段目から先が滞空になる。
   const sim = newSim(['succubus', 'swordsman']);
@@ -1079,8 +1079,8 @@ section('淫魔の飛行');
   check('伸ばしたまま落ちていく', p1.moveId === 'diveKick' && p1.vy < 0, `move=${p1.moveId}`);
 }
 
-// ── 淫魔（掴み） ────────────────────────────────────────────
-section('淫魔の吸血');
+// ── サキュバス（掴み） ────────────────────────────────────────────
+section('サキュバスの吸血');
 {
   // ガードしていても掴まれる
   const sim = newSim(['succubus', 'swordsman']);
@@ -1213,7 +1213,7 @@ section('淫魔の吸血');
 
 {
   // ロスター全員をちゃんと掴めること。掴まれ用の絵が無いキャラがいると
-  // ここで落ちる（同キャラ戦があるので淫魔自身も対象）。
+  // ここで落ちる（同キャラ戦があるのでサキュバス自身も対象）。
   const { CHARACTER_IDS } = await import('../src/game/characters/index.js');
   for (const id of CHARACTER_IDS) {
     const sim = newSim(['succubus', id]);
@@ -1461,7 +1461,7 @@ section('キャヴァリアの串刺し');
 }
 
 {
-  // 掴みなので跳ばれると当たらない（淫魔の吸血と同じ択）
+  // 掴みなので跳ばれると当たらない（サキュバスの吸血と同じ択）
   const sim = newSim(['cavalier', 'swordsman']);
   place(sim, 800, 940);
   const p2 = sim.fighters[1];
@@ -3132,14 +3132,14 @@ section('決定性');
   const expected = JSON.stringify(snapshot);
   for (const inputs of script.slice(200, 300)) sim.step(inputs);
   sim.load(snapshot);
-  check('淫魔でも save/load で巻き戻せる', JSON.stringify(sim.save()) === expected);
+  check('サキュバスでも save/load で巻き戻せる', JSON.stringify(sim.save()) === expected);
 
   const replay = () => {
     sim.load(snapshot);
     for (const inputs of script.slice(200)) sim.step(inputs);
     return JSON.stringify(sim.save());
   };
-  check('淫魔の巻き戻し後の再実行が一致する', replay() === replay());
+  check('サキュバスの巻き戻し後の再実行が一致する', replay() === replay());
 }
 
 {
@@ -3629,7 +3629,7 @@ section('スワイプから入力ビットへの振り分け');
 }
 
 {
-  // 飛行（淫魔の滞空）中だけは、空中でも横スワイプがジャンプにならない。
+  // 飛行（サキュバスの滞空）中だけは、空中でも横スワイプがジャンプにならない。
   // 滞空は横入力がそのまま速度になるので、ジャンプに変えると
   // 横へ動くたびに飛行の残り回数を食い潰して、動かせなくなってしまう。
   const im = new InputManager();
@@ -3859,7 +3859,7 @@ section('CPU の掴みへの対応');
 
   const succ = profileOf(getCharacter('succubus'));
   const sword = profileOf(getCharacter('swordsman'));
-  check('淫魔のスキルは掴みだと読める', succ.skill.grab === true);
+  check('サキュバスのスキルは掴みだと読める', succ.skill.grab === true);
   check('打撃系のスキルは掴み扱いにならない', sword.skill.grab === false);
   check('引っ掻きは掴みではない', succ.attack.grab === false);
 

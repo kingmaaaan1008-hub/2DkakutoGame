@@ -56,7 +56,7 @@ function beamTick(start, group, knockdown = false) {
 export default {
   id: 'mage',
   name: '魔法使い',
-  subtitle: '遠距離型 / 弾幕と極太ビーム',
+  subtitle: '魔法攻撃',
   themeColor: '#b070ff',
 
   health: 900,
@@ -80,7 +80,7 @@ export default {
     crouch: 'crouch',
     hurt: 'hurt',
     death: 'death',
-    /** 掴まれている姿。淫魔の吸血に捕らえられたときに使う。 */
+    /** 掴まれている姿。サキュバスの吸血に捕らえられたときに使う。 */
     grabbed: 'grabbed',
   },
 

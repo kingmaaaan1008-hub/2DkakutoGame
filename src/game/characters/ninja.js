@@ -113,7 +113,7 @@ function windUp(next, fps, from, to) {
 export default {
   id: 'ninja',
   name: '忍者',
-  subtitle: '撹乱型 / まきびしと煙玉',
+  subtitle: '錯乱',
   themeColor: '#9d7bd8',
 
   health: 1000,
@@ -136,7 +136,7 @@ export default {
     crouch: 'crouch',
     hurt: 'hurt',
     death: 'death',
-    /** 掴まれている姿。全キャラが持つ（淫魔とキャヴァリアの掴みのため）。 */
+    /** 掴まれている姿。全キャラが持つ（サキュバスとキャヴァリアの掴みのため）。 */
     grabbed: 'grabbed',
   },
 

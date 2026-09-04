@@ -31,7 +31,7 @@ function flurryHit(start, group) {
 export default {
   id: 'berserker',
   name: '狂戦士',
-  subtitle: '突撃型 / 多段攻撃',
+  subtitle: '乱舞',
   themeColor: '#ff7043',
 
   health: 1050,
@@ -53,7 +53,7 @@ export default {
     crouch: 'crouch',
     hurt: 'hurt',
     death: 'death',
-    /** 掴まれている姿。淫魔の吸血に捕らえられたときに使う。 */
+    /** 掴まれている姿。サキュバスの吸血に捕らえられたときに使う。 */
     grabbed: 'grabbed',
   },
 

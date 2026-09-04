@@ -49,7 +49,7 @@ const FAN_S = 0.2756;
 export default {
   id: 'miko',
   name: '巫女',
-  subtitle: '返し技型 / 御札と結界',
+  subtitle: 'お札と結界',
   themeColor: '#e8425e',
 
   health: 950,
@@ -72,7 +72,7 @@ export default {
     crouch: 'crouch',
     hurt: 'hurt',
     death: 'death',
-    /** 掴まれている姿。全キャラが持つ（淫魔とキャヴァリアの掴みのため）。 */
+    /** 掴まれている姿。全キャラが持つ（サキュバスとキャヴァリアの掴みのため）。 */
     grabbed: 'grabbed',
   },
 

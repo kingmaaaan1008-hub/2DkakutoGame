@@ -15,7 +15,7 @@ const HEIGHT = 215;
 export default {
   id: 'swordsman',
   name: '剣士',
-  subtitle: 'バランス型 / 二段斬り',
+  subtitle: 'バランス',
   themeColor: '#4f9bff',
 
   health: 1000,
@@ -39,7 +39,7 @@ export default {
     crouch: 'crouch',
     hurt: 'hurt',
     death: 'death',
-    /** 掴まれている姿。淫魔の吸血に捕らえられたときに使う。 */
+    /** 掴まれている姿。サキュバスの吸血に捕らえられたときに使う。 */
     grabbed: 'grabbed',
   },
 

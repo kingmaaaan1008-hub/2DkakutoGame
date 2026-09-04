@@ -162,8 +162,9 @@ html, body {
 
 /*
  * ロゴは前置きと本題の 2 段だけ。
- * 「一発当たったら即死な」→「2D 格闘」と続けて読ませたいので、
- * **同じ組み方のまま大きさだけ変える**（字送りも揃える）。
+ * 本題の「2D格闘」はモード選択のボタン（.btn）と同じ書体・同じ字送り（0.06em）で組む。
+ * 字間は letter-spacing だけで作るので、「D」と「格」の間に空白は入れない。
+ * 空白を入れるとそこだけ広く見えて、等間隔が崩れる。
  * 縁取りや金属の階調は付けない。白 1 色で十分読める。
  */
 .logo-wrap { text-align: center; margin-bottom: 20px; }
@@ -186,8 +187,8 @@ html, body {
   font-size: clamp(34px, 8.4vw, 60px);
   font-weight: 800;
   line-height: 1.1;
-  letter-spacing: 0.22em;
-  text-indent: 0.22em;
+  letter-spacing: 0.06em;
+  text-indent: 0.06em;
   color: #fff;
 }
 
@@ -496,7 +497,7 @@ kbd {
 /*
  * 「決定」まで一目で見えることを最優先にした縦組み。
  * 板の高さを画面に合わせて固定し、**溢れるのはキャラの並びだけ**。
- * 見出し・技の説明・決定ボタンはスクロールの外に置いてある。
+ * 見出しと決定ボタンはスクロールの外に置いてある。
  */
 .roster-scroll {
   flex: 0 1 auto;
@@ -568,23 +569,7 @@ kbd {
   color: #04121f;
 }
 
-/*
- * 選んでいるキャラの技。高さが動くと決定ボタンの位置がずれて押し間違えるので、
- * 行数ぶんの高さを先に確保してある。
- */
-.select-info {
-  flex: none;
-  font-size: 12.5px;
-  color: var(--muted);
-  line-height: 1.7;
-  min-height: 76px;
-  margin: 10px 0 12px;
-  padding: 10px 12px;
-  border-left: 3px solid var(--accent-2);
-  background: linear-gradient(90deg, rgba(255, 203, 70, 0.1), rgba(0, 0, 0, 0.3) 60%);
-}
-.select-info b { color: var(--text); font-size: 14px; letter-spacing: 0.04em; }
-.select-foot { flex: none; }
+.select-foot { flex: none; margin-top: 6px; }
 
 /* ── 結果 ─────────────────────────────────────────────── */
 
@@ -673,23 +658,17 @@ kbd {
   .menu { gap: 7px; }
   .roster-scroll { padding: 8px 6px; }
   .roster { grid-template-columns: repeat(auto-fill, minmax(106px, 1fr)); gap: 8px; }
-  .card .csub { display: none; }
-  .select-info { min-height: 0; margin: 8px 0; padding: 8px 10px; font-size: 12px; line-height: 1.6; }
+  /* 一言説明は横持ちでも残す。1 行ぶんなので、字だけ詰めれば収まる */
+  .card .cname { font-size: 13px; }
+  .card .csub { font-size: 9.5px; margin-top: 1px; line-height: 1.3; }
   .arcade-foe { margin: 8px 0; }
   .arcade-track { margin-bottom: 10px; }
   .howto-tabs { margin-top: 8px; }
   .title-foot { margin-top: 8px; }
 }
 
-/*
- * 横持ちは縦が足りないので、技の説明と決定ボタンを横に並べて
- * 空いた高さをキャラの並びに回す。
- */
+/* 横持ちは縦が足りないので、決定ボタンを低くしてキャラの並びに高さを回す。 */
 @media (max-height: 560px) and (min-width: 640px) {
-  /* ボタンは説明の高さに引き伸ばさない。下辺だけ揃える */
-  .select-foot { display: flex; align-items: flex-end; gap: 14px; }
-  .select-info { flex: 1 1 auto; margin: 10px 0 0; }
-  .select-foot .menu.row { flex: none; width: 210px; margin-top: 10px; }
   .select-foot .menu.row .btn { padding: 9px 10px; font-size: 13px; }
 }
 
