@@ -574,6 +574,7 @@ kbd {
 
 /* ── 結果 ─────────────────────────────────────────────── */
 
+/* 見出しはロゴや小見出しと同じ白 1 色。階調を付けると浮く */
 .result-title {
   font-size: clamp(30px, 8vw, 44px);
   font-weight: 900;
@@ -581,13 +582,7 @@ kbd {
   letter-spacing: 0.04em;
   text-align: center;
   margin-bottom: 6px;
-  background: linear-gradient(180deg, #fffdf2, #ffd45e 45%, #ff8a2b);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  -webkit-text-stroke: 2px #17070a;
-  paint-order: stroke fill;
-  filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.5));
+  color: #fff;
 }
 .result-score { text-align: center; color: var(--muted); font-size: 13px; letter-spacing: 0.06em; margin-bottom: 20px; }
 
