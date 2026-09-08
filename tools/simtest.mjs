@@ -827,6 +827,56 @@ section('女子高生');
 }
 
 {
+  // 彼氏は「突進を跳び越す」で避けられること。
+  //
+  // 判定が頭まであった頃と、空振った突進の判定が滑りの間も生きていた頃は、
+  // **どのキャラのどの踏み切りでも避けられなかった**（総当たり 170 通り × 10 キャラ）。
+  // 跳ぶ以外に手が無い技なので、跳んで避けられることがこの技の成立条件になる。
+  const hop = (delay) => {
+    const sim = newSim(['schoolgirl', 'swordsman']);
+    place(sim, 500, 1100);
+    const me = sim.fighters[1];
+    run(sim, 1, BTN.SKILL);
+    for (let t = 0; t < 240; t += 1) {
+      run(sim, 1, 0, t >= delay && t < delay + 3 ? BTN.UP : 0);
+      if (me.health === 0) return false;
+    }
+    return true;
+  };
+  let ok = 0;
+  for (let d = 60; d < 140; d += 1) if (hop(d)) ok += 1;
+  check('彼氏は跳び越して避けられる', ok > 0, `避けられる踏み切り=${ok}通り`);
+  // 猶予が細すぎると「見てから跳ぶ」ではなく目押しになる
+  check('跳び越す猶予がひと目ぶんある', ok >= 12, `${ok}F`);
+  // どこで跳んでも避けられるようだと、逆に技が成立しない
+  check('いつ跳んでも避けられるわけではない', ok < 60, `${ok}F`);
+}
+
+{
+  // 空振った突進はそこで終わり。滑りと走り去りはもう当たらない。
+  // ここが生きていると、滑って止まるのがちょうど相手の足元なので
+  // 「跳び越したのにその上へ着地して当たる」が起きる。
+  const sim = newSim(['schoolgirl', 'swordsman']);
+  place(sim, 500, 1100);
+  const p2 = sim.fighters[1];
+  run(sim, 1, BTN.SKILL);
+
+  const find = () => sim.projectiles.find((p) => p.type === 'boyfriend');
+  // 突進を跳び越す
+  for (let t = 0; t < 100; t += 1) run(sim, 1, 0, t >= 95 && t < 98 ? BTN.UP : 0);
+  check('跳んでいる（前提）', p2.airborne && p2.health > 0, `y=${p2.y.toFixed(0)} hp=${p2.health}`);
+  check('この時点ではまだ判定が生きている', find()?.spent === false, `spent=${find()?.spent}`);
+
+  // 踏み込みを出し切らせる
+  for (let i = 0; i < 60 && find() && !find().spent; i += 1) run(sim, 1, 0);
+  check('踏み込みを空振ったら判定が切れる', find()?.spent === true, `spent=${find()?.spent}`);
+
+  // 滑り込んできても、走り抜けていっても、もう当たらない
+  for (let i = 0; i < 200 && find(); i += 1) run(sim, 1, 0);
+  check('空振ったあとは触れても当たらない', p2.health > 0, `hp=${p2.health}`);
+}
+
+{
   // 壁際で呼んでも彼氏は出る。
   // 彼氏は 300 後ろから走ってくるので、壁を背負っていると出現位置が画面外になる。
   // 弾と同じに画面外で消していた頃は、ここでスキルがまるごと空振りになっていた。
@@ -4027,6 +4077,589 @@ section('CPU の飛び道具への対応');
     sim.step([0, bits]);
   }
   check('弾が間近なら2段目を出して避けようとする', airJumped, `lastAct=${cpu.lastAct}`);
+}
+
+// スキルはガードでは止まらない（guardBreak）。ここを読めていないと、
+// CPU は一番確実に見えるガードを固めて、連打されるだけで負ける。
+section('CPU のスキル連打への対応');
+{
+  const { CpuController } = await import('../src/game/ai.js');
+
+  // スキル（ガード崩し）が来ていると読めること。打撃は読み違えないこと
+  {
+    const sim = newSim(['berserker', 'swordsman']);
+    place(sim, 800, 950);
+    const cpu = new CpuController(1, 'hard');
+    run(sim, 1, BTN.SKILL);
+    run(sim, 4, 0);
+    check('ガードを崩す技が来ていると分かる', cpu._incomingBreak(sim.fighters[0]),
+      `move=${sim.fighters[0].moveId}`);
+  }
+  {
+    const sim = newSim(['berserker', 'swordsman']);
+    place(sim, 800, 950);
+    const cpu = new CpuController(1, 'hard');
+    run(sim, 1, BTN.ATTACK);
+    run(sim, 4, 0);
+    check('普通の打撃はガード崩し扱いにしない', !cpu._incomingBreak(sim.fighters[0]),
+      `move=${sim.fighters[0].moveId}`);
+  }
+
+  // ガードで固めている最中にスキルが来たら考え直すこと。
+  // 掴みと同じで「守っているから大丈夫」が成立しない
+  {
+    const sim = newSim(['berserker', 'swordsman']);
+    place(sim, 800, 950);
+    const cpu = new CpuController(1, 'hard');
+    cpu.plan = { bits: BTN.GUARD, ticks: 30 };
+    run(sim, 1, BTN.SKILL);
+    run(sim, 3, 0);
+    check('ガード中でもスキルが来たら考え直す',
+      cpu._mustRethink(sim, sim.fighters[1], sim.fighters[0]));
+  }
+
+  // ガードで止まらない技にガードを選ばないこと
+  {
+    let guarded = 0;
+    for (let seed = 1; seed <= 20; seed += 1) {
+      const sim = newSim(['berserker', 'swordsman'], seed);
+      place(sim, 800, 950);
+      const cpu = new CpuController(1, 'hard');
+      run(sim, 1, BTN.SKILL);
+      for (let i = 0; i < 12; i += 1) {
+        const bits = cpu.think(sim);
+        if (bits & BTN.GUARD) guarded += 1;
+        sim.step([0, bits]);
+      }
+    }
+    check('ガード崩しにガードで応えない', guarded === 0, `ガードを選んだ回数=${guarded}`);
+  }
+
+  // 照射（溜め 60 ＋ 照射 34）をしゃがんでくぐり切れること。
+  // 途中で立つと、立ち上がりの 1 ティックでやられ判定がビームの下端まで戻る
+  {
+    let survived = 0;
+    for (let seed = 1; seed <= 10; seed += 1) {
+      const sim = newSim(['mage', 'swordsman'], seed);
+      place(sim, 600, 1050);
+      const cpu = new CpuController(1, 'hard');
+      const me = sim.fighters[1];
+      for (let i = 0; i < 120; i += 1) sim.step([i === 0 ? BTN.SKILL : 0, cpu.think(sim)]);
+      if (me.health > 0) survived += 1;
+    }
+    check('照射をくぐり切る', survived >= 9, `${survived}/10 回`);
+  }
+
+  /**
+   * 同じ技を連打されても、正解の手が「飽きて」軽くならないこと。
+   * ここが効いていないと、2 回目の照射からガードを選び直して割られる。
+   *
+   * **1 シードだけで見ない。** 15 秒間ずっと照射を撃たれ続ける形は、
+   * 抜けられるかどうかが五分に近い（実測 77/200 ＝ 38%）。1 シードで
+   * 「抜けられた」を assert すると、重みを少し触って乱数の並びがずれるだけで
+   * 裏が出る ＝ 何を壊したわけでもないのに落ちるテストになる。
+   * 見たいのは**抜けられる目があること**なので、そこを割合で見る。
+   *
+   * 目安として、正解を積み直す仕組みが無かった頃はこの形で 0/200 だった。
+   */
+  {
+    let survived = 0;
+    const runs = 40;
+    for (let seed = 1; seed <= runs; seed += 1) {
+      const sim = newSim(['mage', 'swordsman'], seed);
+      place(sim, 600, 1050);
+      const cpu = new CpuController(1, 'hard');
+      const me = sim.fighters[1];
+      let ko = -1;
+      for (let i = 0; i < 900 && ko < 0; i += 1) {
+        // 溜め〜照射が終わるたびに撃ち直させる
+        sim.step([sim.fighters[0].state === STATE.MOVE ? 0 : BTN.SKILL, cpu.think(sim)]);
+        if (me.health === 0) ko = i;
+      }
+      if (ko < 0) survived += 1;
+    }
+    check('照射を連打されても抜ける目がある', survived >= runs * 0.25,
+      `${survived}/${runs} 回`);
+  }
+
+  // 判定を自分では持たない技（彼氏を呼ぶ・弾を撃つ）にも戻りはある。
+  // 判定の有無だけで隙を測ると、この 40 フレームがまるごと見えない
+  {
+    const sim = newSim(['schoolgirl', 'swordsman']);
+    place(sim, 800, 900);
+    const cpu = new CpuController(1, 'hard');
+    run(sim, 1, BTN.SKILL);
+    run(sim, 30, 0); // 呼び終わり（弾は 12F で出る）
+    const open = cpu._openFrames(sim.fighters[0]);
+    check('弾を撃つだけの技の戻りも隙として見える', open > 0,
+      `move=${sim.fighters[0].moveId} f=${sim.fighters[0].moveFrame} open=${open}`);
+  }
+
+  // 落ちてくる技を「浮いている高さ」で測ると、頭上を通る技に見えてしまう。
+  // メイドの天空斬りは昇り切ってから地面まで落ちてくるので、しゃがんでも当たる
+  {
+    const sim = newSim(['maid', 'swordsman']);
+    place(sim, 800, 900);
+    const cpu = new CpuController(1, 'hard');
+    run(sim, 1, BTN.SKILL);
+    let sawAirborne = false;
+    let duckable = false;
+    for (let i = 0; i < 40; i += 1) {
+      run(sim, 1, 0);
+      if (sim.fighters[0].airborne) {
+        sawAirborne = true;
+        if (cpu._isDuckable(sim.fighters[0])) duckable = true;
+      }
+    }
+    check('天空斬りは浮いていてもしゃがめる技に見えない', sawAirborne && !duckable,
+      `浮いた=${sawAirborne} しゃがめる判定=${duckable}`);
+  }
+}
+
+// 空中スキルは発生 4〜6 フレームしかない。技が出てから見ていたのでは
+// どの手も間に合わないので、CPU は「跳ばれたこと」の方を合図にしている。
+section('CPU の飛び込みへの対応');
+{
+  const { CpuController, profileOf, hasFastDive } = await import('../src/game/ai.js');
+
+  // 空中技の性能を技データから読めていること
+  {
+    const maid = profileOf(getCharacter('maid'));
+    check('空中スキルの発生を読めている', maid.airSkill.startup === 4,
+      `startup=${maid.airSkill.startup}`);
+    check('空中スキルがガードを崩すと分かる', maid.airSkill.guardBreak === true);
+    // 天空斬りは重力ではなく技データが落下速度を決めている（15/ティック）。
+    // ここを読めないと、一番速い技を一番遅く見積もることになる
+    check('技が決める落下速度を読めている', maid.airSkill.drop > 10,
+      `drop=${maid.airSkill.drop}`);
+    // 判定の下端が足元より下 ＝ 地面ごと薙ぐので、しゃがんでもくぐれない
+    check('判定が地面まで届くと分かる', maid.airSkill.low < 0, `low=${maid.airSkill.low}`);
+  }
+  {
+    // 弾を撃つだけの空中技は「降ってくる脅威」ではない（弾の担当）
+    check('弾を撃つ空中技は降り技として数えない', !hasFastDive(getCharacter('schoolgirl')));
+    // 溜めの長い空中技は見てから対応できるので、これも別扱い
+    check('溜めの長い空中技は降り技として数えない', !hasFastDive(getCharacter('ninja')));
+    check('急降下技を持つキャラは降り技持ちと分かる', hasFastDive(getCharacter('maid')));
+  }
+
+  // 技が出る前に、跳ばれた時点で気づけること
+  {
+    const sim = newSim(['maid', 'swordsman']);
+    place(sim, 800, 1050);
+    const cpu = new CpuController(1, 'hard');
+    run(sim, 1, BTN.UP | BTN.RIGHT);
+    run(sim, 6, 0);
+    const [foe, me] = sim.fighters;
+    check('技が出る前でも降ってくると分かる',
+      foe.moveId === null && cpu._airThreat(me, foe) !== null,
+      `move=${foe.moveId} y=${foe.y.toFixed(0)}`);
+  }
+
+  // 跳ばれたら、決めてある手を打ち切って考え直すこと
+  {
+    const sim = newSim(['maid', 'swordsman']);
+    place(sim, 800, 1050);
+    const cpu = new CpuController(1, 'hard');
+    cpu.plan = { bits: BTN.ATTACK, ticks: 30 };
+    run(sim, 1, BTN.UP | BTN.RIGHT);
+    run(sim, 6, 0);
+    check('跳ばれたら前の判断を打ち切る',
+      cpu._mustRethink(sim, sim.fighters[1], sim.fighters[0]));
+  }
+
+  // 降り技には跳んで応えない。浮いた時点でガードもダッシュも出せず、
+  // 着地際を狙って落とされるだけになる（総当たりでも 0/15 だった）
+  {
+    let jumped = 0;
+    for (let seed = 1; seed <= 20; seed += 1) {
+      const sim = newSim(['maid', 'swordsman'], seed);
+      place(sim, 800, 1050);
+      const cpu = new CpuController(1, 'hard');
+      run(sim, 1, BTN.UP | BTN.RIGHT);
+      for (let i = 0; i < 30; i += 1) {
+        const bits = cpu.think(sim);
+        if (bits & BTN.UP) jumped += 1;
+        sim.step([0, bits]);
+      }
+    }
+    check('降ってくる相手に跳んで応えない', jumped === 0, `跳んだ回数=${jumped}`);
+  }
+
+  // 地面まで薙いでくる技にしゃがまないこと。
+  // 接触点の高さで測ると「くぐれる」に見えてしまい、しゃがんだまま刺さる
+  {
+    let ducked = 0;
+    for (let seed = 1; seed <= 20; seed += 1) {
+      const sim = newSim(['maid', 'swordsman'], seed);
+      place(sim, 800, 1000);
+      const cpu = new CpuController(1, 'hard');
+      run(sim, 1, BTN.UP | BTN.RIGHT);
+      for (let i = 0; i < 30; i += 1) {
+        const bits = cpu.think(sim);
+        if (bits & BTN.DOWN) ducked += 1;
+        sim.step([0, bits]);
+      }
+    }
+    check('地面まで届く降り技にしゃがまない', ducked === 0, `しゃがんだ回数=${ducked}`);
+  }
+
+  // 潜れるかどうかは、判定の長さではなく前進ぶんまで含めて測ること。
+  // キャヴァリアのドリルは判定 208 でも突進を足すと 518 届くので、
+  // 判定だけで測ると内側から潜りに行って刺さる
+  {
+    const sim = newSim(['cavalier', 'swordsman']);
+    place(sim, 800, 1050);
+    const cpu = new CpuController(1, 'hard');
+    run(sim, 1, BTN.UP | BTN.RIGHT);
+    run(sim, 8, 0);
+    const air = cpu._airThreat(sim.fighters[1], sim.fighters[0]);
+    check('突進ぶんまで含めた射程を持っている', air && air.danger > air.reach * 2,
+      `判定=${air?.reach.toFixed(0)} 突進込み=${air?.danger.toFixed(0)}`);
+  }
+
+  /**
+   * 本題。飛び込んで空中スキルを振ってくる相手に、どれだけ耐えられるか。
+   *
+   * 降り技を持つ 5 キャラ × 踏み切りの遅速 3 通り × 乱数 30 通り。
+   * 跳んだ合図を読むようにする前は 5 キャラ合わせて 314/900 被弾していた。
+   */
+  {
+    const rusher = (sim, delay, state) => {
+      const [me, foe] = sim.fighters;
+      const toFoe = foe.x >= me.x ? BTN.RIGHT : BTN.LEFT;
+      if (me.airborne) {
+        if (me.vy < 0 && (state.t += 1) >= delay) return BTN.SKILL | toFoe;
+        return toFoe;
+      }
+      state.t = 0;
+      if (me.state === STATE.MOVE || me.state === STATE.LAND) return 0;
+      return Math.abs(foe.x - me.x) > 330 ? toFoe | BTN.DASH : BTN.UP | toFoe;
+    };
+    let hit = 0;
+    let n = 0;
+    for (const id of ['swordsman', 'berserker', 'succubus', 'cavalier', 'maid']) {
+      for (let seed = 1; seed <= 30; seed += 1) {
+        for (const delay of [0, 4, 8]) {
+          const sim = newSim([id, 'swordsman'], seed);
+          const cpu = new CpuController(1, 'hard');
+          const state = { t: 0 };
+          const [foe, me] = sim.fighters;
+          for (let i = 0; i < 900 && me.health > 0 && foe.health > 0; i += 1) {
+            sim.step([rusher(sim, delay, state), cpu.think(sim)]);
+          }
+          n += 1;
+          if (me.health === 0) hit += 1;
+        }
+      }
+    }
+    check('飛び込みからの空中スキルを捌けている', hit <= 240, `被弾 ${hit}/${n}`);
+  }
+
+  // 跳んだ向きを読みに入れること。
+  //
+  // 速さの絶対値を取って必ずこちらへ向けていた頃は、**離れていく跳びまで
+  // 「突っ込んで来る」と読んで**いた。プレイヤーが跳ぶたびに CPU が下がり
+  // 出すのはこれが原因で、跳びさえすれば降り技として数えられていた。
+  // 踏み込みぶんは必ずこちらへ向くので、そこは worst case のまま残す。
+  {
+    // 同じ間合いから、向かって跳んだときと離れて跳んだときを見比べる
+    const threatAt = (dir) => {
+      const sim = newSim(['maid', 'swordsman']);
+      place(sim, 1080 - 290, 1080);
+      const [foe, me] = sim.fighters;
+      const cpu = new CpuController(1, 'hard');
+      run(sim, 1, BTN.UP | dir);
+      run(sim, 6, dir);
+      return { threat: cpu._airThreat(me, foe), vx: foe.vx };
+    };
+    const toward = threatAt(BTN.RIGHT);
+    const awayFrom = threatAt(BTN.LEFT);
+    check('向かってくる跳びは降り技として数える', toward.threat !== null,
+      `vx=${toward.vx.toFixed(1)}`);
+    check('離れていく跳びは降り技として数えない', awayFrom.threat === null,
+      `vx=${awayFrom.vx.toFixed(1)} threat=${JSON.stringify(awayFrom.threat)}`);
+  }
+}
+
+// ── CPU が手を出さなくなっていないか ────────────────────────
+// 「当たらない」だけなら下がり続けるのが常に正しいので、避ける手ばかりが
+// 積み上がると、一手ずつは正しいのに何もしない CPU になる。
+section('CPU の攻めっ気');
+{
+  const { CpuController } = await import('../src/game/ai.js');
+
+  // 手が出ていない時間が攻めの重みに乗ること
+  {
+    const cpu = new CpuController(1, 'hard');
+    cpu.idle = 0;
+    check('出したばかりなら寄せない', cpu.patienceBias('attack') === 0);
+    cpu.idle = 300;
+    check('我慢が続くと攻め手が重くなる', cpu.patienceBias('attack') > 0.5,
+      `bias=${cpu.patienceBias('attack')}`);
+    check('守り手は軽くしない', cpu.patienceBias('guard') === 0);
+    // 跳び込みには乗せない。跳ぶ手は状況ごとに重みを削ってあるので、
+    // ここで積み直すと一番刺されやすい手へ飛び出すことになる
+    check('跳び込みには寄せを乗せない', cpu.patienceBias('jumpIn') === 0);
+    cpu.idle = 100000;
+    check('寄せには上限がある', cpu.patienceBias('rush') <= 1.6,
+      `bias=${cpu.patienceBias('rush')}`);
+  }
+
+  /**
+   * スキルの長い待ち時間が、普通の打撃まで止めないこと。
+   *
+   * 数え上げをひとつで共有していた頃は、照射のような大技を 1 回振ると
+   * そのクールダウン（150 ティック ＝ 2.5 秒）のあいだ**打撃も振れなく**
+   * なっていた。大技のあと数秒なにもしないように見える正体がこれ。
+   */
+  {
+    const cpu = new CpuController(1, 'hard');
+    cpu._commit({ act: 'skill', bits: BTN.SKILL, ticks: 6, skillCooldown: 150 });
+    check('スキルを振ると次のスキルまでは待つ', cpu.skillCd === 150, `skillCd=${cpu.skillCd}`);
+    check('スキルの待ち時間は打撃を止めない', cpu.cooldown === 0, `cooldown=${cpu.cooldown}`);
+    cpu._commit({ act: 'attack', bits: BTN.ATTACK, ticks: 6, cooldown: 8 });
+    check('打撃の間はスキルより短い', cpu.cooldown === 8 && cpu.cooldown < cpu.skillCd,
+      `cooldown=${cpu.cooldown} skillCd=${cpu.skillCd}`);
+  }
+
+  // 振ったら数え直すこと（当たったかどうかは見ない）
+  {
+    const cpu = new CpuController(1, 'hard');
+    cpu.idle = 200;
+    cpu._commit({ act: 'attack', bits: BTN.ATTACK, ticks: 6 });
+    check('振ったら我慢を数え直す', cpu.idle === 0);
+    cpu.idle = 200;
+    cpu._commit({ act: 'retreat', bits: BTN.LEFT, ticks: 6 });
+    check('下がっても我慢は数え続ける', cpu.idle === 200);
+  }
+
+  /**
+   * 置き技。相手が来るところへ、先に判定を出しておけること。
+   *
+   * 振る手を「届いてから」選んでいると発生ぶんだけ必ず遅れる。跳んだあとの
+   * 相手は重力に従うしかないので、どこへいつ来るかは読み切れる。
+   */
+  {
+    const sim = newSim(['swordsman', 'berserker']);
+    const cpu = new CpuController(1, 'hard');
+    const [foe, me] = sim.fighters;
+    const prof = (await import('../src/game/ai.js')).profileOf(me.def);
+
+    // 立っているだけの相手は、届いていなければ置く先も無い
+    place(sim, 600, 1200);
+    check('遠くで止まっている相手には置かない',
+      cpu._placeWindow(me, foe, prof.attack) === -1,
+      `t=${cpu._placeWindow(me, foe, prof.attack)}`);
+
+    // 跳んで突っ込んでくる相手は、入ってくるまでの時間が読める
+    place(sim, 1200 - 260, 1200);
+    run(sim, 1, BTN.UP | BTN.RIGHT);
+    run(sim, 4, BTN.RIGHT);
+    const t = cpu._placeWindow(me, foe, prof.attack);
+    check('跳び込んでくる相手は入ってくる時間が読める', t > 0,
+      `t=${t} foeVx=${foe.vx.toFixed(1)}`);
+  }
+
+  // 届く間合いに居るのに、振るより下がる方が多くならないこと。
+  // ここが逆転していると「近づいては離れる」だけで手が出ない
+  {
+    let attacked = 0;
+    let backed = 0;
+    for (let seed = 1; seed <= 40; seed += 1) {
+      const sim = newSim(['swordsman', 'berserker'], seed);
+      const cpu = new CpuController(1, 'hard');
+      const [foe, me] = sim.fighters;
+      for (let i = 0; i < 240; i += 1) {
+        // 相手は何もせず、届く間合いに立たせ続ける
+        place(sim, me.x - 150, me.x);
+        sim.step([0, cpu.think(sim)]);
+        if (cpu.lastAct === 'attack' || cpu.lastAct === 'skill') attacked += 1;
+        else if (cpu.lastAct === 'retreat') backed += 1;
+        if (foe.health === 0) { foe.health = 1000; foe.doomed = false; }
+      }
+    }
+    check('届く間合いでは下がるより振る', attacked > backed,
+      `振り=${attacked} 下がり=${backed}`);
+  }
+}
+
+// ── 技を使い切れているか ────────────────────────────────────
+// キャラに用意した技を CPU が一度も出せていないと、そのキャラは
+// 別物になる。連携の押し直しと、判定を onEnd に持つ技がここの肝。
+section('CPU が技を使い切る');
+{
+  const { CpuController } = await import('../src/game/ai.js');
+
+  /** 相手役 4 種を回して、CPU が実際に出した技を数える。 */
+  const usedMoves = (id, ticks = 900) => {
+    const bots = [
+      (sim, t) => {
+        const m = sim.fighters[0], f = sim.fighters[1];
+        const to = f.x > m.x ? BTN.RIGHT : BTN.LEFT;
+        const c = t % 90;
+        return c < 4 ? BTN.UP | to : c < 30 ? to : c < 34 ? BTN.ATTACK : to;
+      },
+      (sim, t) => {
+        const m = sim.fighters[0], f = sim.fighters[1];
+        const to = f.x > m.x ? BTN.RIGHT : BTN.LEFT;
+        return Math.abs(f.x - m.x) > 200 ? to | BTN.DASH : t % 40 < 6 ? BTN.ATTACK : to;
+      },
+      (sim, t) => (t % 120 < 90 ? BTN.GUARD : BTN.ATTACK),
+      (sim, t) => {
+        const m = sim.fighters[0], f = sim.fighters[1];
+        const to = f.x > m.x ? BTN.RIGHT : BTN.LEFT;
+        return t % 60 < 5 ? BTN.SKILL : Math.abs(f.x - m.x) > 300 ? to : 0;
+      },
+    ];
+    const used = new Set();
+    let n = 0;
+    for (const b of CHARACTER_IDS) for (const bot of bots) {
+      const sim = newSim([b, id], 977 + n);
+      const cpu = new CpuController(1, 'hard');
+      const me = sim.fighters[1];
+      let last = null;
+      for (let t = 0; t < ticks && !sim.isOver; t += 1) {
+        sim.step([bot(sim, t), cpu.think(sim)]);
+        if (me.moveId && me.moveId !== last) used.add(me.moveId);
+        last = me.moveId;
+      }
+      n += 1;
+    }
+    return used;
+  };
+
+  {
+    const used = usedMoves('brawler');
+    // 4 段目まで繋げていること。1 段目で止まっていると連打しているだけになる
+    check('格闘娘の連携を最後まで繋ぐ', used.has('punch4'), `出した技=${[...used]}`);
+    // スキル側の繋ぎ。押しっぱなしでは出ないので、押し直せているかが出る
+    check('スキルから繋ぐ技も出せる', used.has('heelSpin') && used.has('flyKick'),
+      `出した技=${[...used]}`);
+  }
+
+  {
+    const used = usedMoves('cavalier');
+    // 判定を持たない「帰り道」の連携。着地の隙を 20 → 14 に縮める
+    check('突進から降りる連携を使う', used.has('boostDrop'), `出した技=${[...used]}`);
+  }
+
+  {
+    // 結界は打撃も普通の弾も素通しなので、射程で測ると「何も起きない技」に
+    // 見える。止めるのはガード不能技と掴みだけで、そこを見ないと一生使わない
+    const used = usedMoves('miko');
+    check('巫女が結界を張る', used.has('ward'), `出した技=${[...used]}`);
+  }
+
+  // 判定を onEnd の先に持つ技を「当たらない技」と読み違えないこと
+  {
+    const { profileOf } = await import('../src/game/ai.js');
+    const brawler = getCharacter('brawler');
+    // 回転かかと落としは自分では hits を持たず、蹴りは繋ぎ先にある
+    check('回転かかと落とし自体は判定を持たない',
+      brawler.moves.heelSpin.hits.length === 0);
+    check('それでも当たる技だと分かる', profileOf(brawler).airSkill.range > 0,
+      `range=${profileOf(brawler).airSkill.range}`);
+  }
+}
+
+// ── 壁を背負う／相手を詰める ────────────────────────────────
+// 壁際の下がりは距離を買わない。買えるのは壁までの残りぶんだけで、
+// 使い切ったあとは同じ間合いのまま逃げ道だけが減っている。
+section('CPU の壁ぎわの立ち回り');
+{
+  const { CpuController } = await import('../src/game/ai.js');
+  const RIGHT_WALL = STAGE_WIDTH - STAGE_MARGIN;
+
+  // 背中の余地を左右どちらでも同じように測れること
+  {
+    const sim = newSim();
+    const [foe, me] = sim.fighters;
+    const cpu = new CpuController(1, 'hard');
+    place(sim, 400, STAGE_MARGIN + 50);
+    check('左の壁を背負っているのが分かる', cpu._backRoom(me, foe.x) === 50,
+      `room=${cpu._backRoom(me, foe.x)}`);
+    place(sim, 1400, RIGHT_WALL - 50);
+    check('右の壁を背負っているのが分かる', cpu._backRoom(me, foe.x) === 50,
+      `room=${cpu._backRoom(me, foe.x)}`);
+    place(sim, 400, STAGE_WIDTH / 2);
+    check('真ん中なら余地がある', cpu._backRoom(me, foe.x) > 700,
+      `room=${cpu._backRoom(me, foe.x)}`);
+  }
+
+  // 立ち回りの中で、壁を背負ったら下がる手が減って前へ出る手が増えること
+  {
+    const count = (myX, foeX) => {
+      let back = 0;
+      let forward = 0;
+      for (let seed = 1; seed <= 30; seed += 1) {
+        const sim = newSim(['swordsman', 'berserker'], seed);
+        const cpu = new CpuController(1, 'hard');
+        const [foe, me] = sim.fighters;
+        for (let i = 0; i < 200; i += 1) {
+          // 間合いは変えずに、立っている場所だけを入れ替えて見る
+          place(sim, foeX, myX);
+          sim.step([0, cpu.think(sim)]);
+          if (cpu.lastAct === 'retreat') back += 1;
+          else if (cpu.lastAct === 'rush' || cpu.lastAct === 'walkIn') forward += 1;
+          if (foe.health === 0) { foe.health = 1000; foe.doomed = false; }
+        }
+      }
+      return { back, forward };
+    };
+    // 同じ間合い（350）を、真ん中と右の壁ぎわで比べる
+    const middle = count(STAGE_WIDTH / 2, STAGE_WIDTH / 2 - 350);
+    const wall = count(RIGHT_WALL - 60, RIGHT_WALL - 60 - 350);
+    check('壁を背負うと下がらなくなる', wall.back < middle.back,
+      `壁ぎわ=${wall.back} 真ん中=${middle.back}`);
+    check('壁を背負うと前へ出る手が増える', wall.forward > middle.forward,
+      `壁ぎわ=${wall.forward} 真ん中=${middle.forward}`);
+  }
+
+  /**
+   * 相手を壁に詰めたなら、そこを手放さないこと。
+   *
+   * 密着は「相手の間合いの内側で殴り合う割の悪い形」なので、普段はいったん
+   * 離れて仕切り直す。でも相手の背中が壁なら話が別で、**空けたぶんだけ
+   * 相手が出てこられる**。せっかく作った状況を毎回返してしまう。
+   *
+   * 見るのは下がる手が減ることの方。攻めの重みも割り増してあるが、そちらは
+   * 連打を避ける仕組み（同じ手の重みを落とす）とクールダウンで頭打ちになるので、
+   * 実際に効いているのは「下がらない」ぶん（実測 20% → 6%）。
+   */
+  {
+    const count = (foeX, myX) => {
+      let back = 0;
+      for (let seed = 1; seed <= 30; seed += 1) {
+        const sim = newSim(['swordsman', 'berserker'], seed);
+        const cpu = new CpuController(1, 'hard');
+        const [foe, me] = sim.fighters;
+        for (let i = 0; i < 200; i += 1) {
+          place(sim, foeX, myX);
+          sim.step([0, cpu.think(sim)]);
+          if (cpu.lastAct === 'retreat') back += 1;
+          if (foe.health === 0) { foe.health = 1000; foe.doomed = false; }
+        }
+      }
+      return back;
+    };
+    // 密着（100）で、相手が真ん中のときと壁を背負っているときを比べる
+    const middle = count(STAGE_WIDTH / 2, STAGE_WIDTH / 2 + 100);
+    const pinned = count(STAGE_MARGIN + 60, STAGE_MARGIN + 60 + 100);
+    check('詰めた相手からは離れ直さない', pinned < middle * 0.6,
+      `詰め=${pinned} 真ん中=${middle}`);
+  }
+
+  // 下がっても届く技からは逃げられないこと（壁までの残りで頭打ちになる）
+  {
+    const sim = newSim(['berserker', 'swordsman']);
+    const cpu = new CpuController(1, 'hard');
+    const [foe, me] = sim.fighters;
+    // 背中が壁。踏み込んでくる技に対して、下がる余地は 20 しかない
+    place(sim, RIGHT_WALL - 220, RIGHT_WALL - 20);
+    check('壁ぎわでは下がって外せないと分かる',
+      cpu._backRoom(me, foe.x) === 20, `room=${cpu._backRoom(me, foe.x)}`);
+  }
 }
 
 // ── アーケード（勝ち抜き） ──────────────────────────────────

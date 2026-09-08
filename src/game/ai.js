@@ -17,7 +17,7 @@
  *
  * を土台にしている。難易度はこの判断をどれだけ拾えるかで変える。
  */
-import { BTN, STATE } from './constants.js';
+import { BTN, GRAVITY, STAGE_MARGIN, STAGE_WIDTH, STATE } from './constants.js';
 import { CROUCH_CLEAR_Y, HURTBOX } from './fighter.js';
 import { getProjectileDef, isProjectile } from './projectiles.js';
 
@@ -26,6 +26,12 @@ import { getProjectileDef, isProjectile } from './projectiles.js';
  *
  * `hold` は決めた行動を維持する時間の倍率。大きいほど「読み直しが遅い」＝
  * 状況が変わっても前の判断を引きずるので、弱くなる。
+ *
+ * `read` は「ガードでは止まらない技（掴み・スキル）だと見抜ける割合」。
+ * ここだけは重みではなく**気づけるかどうか**で、外すと一番確実に見える
+ * ガードを固めて、そのまま割られる。スキルを連打されたときの強さは
+ * ほぼこの値で決まるので、難易度差が一番はっきり出るのもここ。
+ *
  * ほかは「その手をどれだけ重く見るか」。大きいほどその状況で正しく選べる。
  */
 export const DIFFICULTY = {
@@ -33,6 +39,7 @@ export const DIFFICULTY = {
     react: 20,
     hold: 1.9,
     guard: 0.3,
+    read: 0.3,
     punish: 0.18,
     aggression: 0.4,
     crush: 0.25,
@@ -43,6 +50,7 @@ export const DIFFICULTY = {
     react: 9,
     hold: 1.25,
     guard: 0.62,
+    read: 0.75,
     punish: 0.55,
     aggression: 0.6,
     crush: 0.6,
@@ -53,6 +61,7 @@ export const DIFFICULTY = {
     react: 3,
     hold: 0.8,
     guard: 0.94,
+    read: 1,
     punish: 0.92,
     aggression: 0.8,
     crush: 0.92,
@@ -125,9 +134,161 @@ const PROJECTILE_WATCH = 34;
  */
 const RETHINK_FRAMES = 12;
 
+/**
+ * 守りの構えを維持する上限（ティック）。
+ *
+ * 魔法使いの照射は溜め 60 ＋ 照射 34 ＝ 94 フレーム居座るので、
+ * ここが短いと**照射の途中で立ち上がる**。しゃがみは立ち上がりの 1 ティックで
+ * やられ判定が 110 まで戻り、ビームの下端 107 に届いてしまうため、
+ * 「一瞬だけ早く立つ」がそのまま被弾になる。
+ */
+const HOLD_MAX = 120;
+
+/**
+ * ガード不能弾を跳び越すための踏み切り窓（ティック）。
+ *
+ * 跳ぶかどうかではなく「いつ踏み切るか」の問題なので、
+ * 弾の到達フレームが頂点までのフレームと噛み合ったところだけで踏み切る。
+ */
+const HOP_WINDOW = 8;
+
+/**
+ * 跳んで越えたと言うのに要る余裕（弾の上端と跳べる高さの差）。
+ *
+ * 頂点で一瞬だけ上に出ても越えたことにはならない。弾の横幅を通り抜けるあいだ
+ * ずっと上に居られて初めて越えられる。**越えられない弾に跳ぶのは、
+ * 跳んだ姿勢のまま当たりに行くのと同じ**なので、ここで先に切り分ける。
+ *
+ * 40 は「踏み切りの猶予が 16 ティック残る差」。CPU は頂点の前後 HOP_WINDOW で
+ * 踏み切るので、これだけ無いと自分の狙いが窓から外れる。
+ * 一番跳べないキャラ（跳べる高さ 200）で総当たりして決めた値で、
+ * 差が 22 まで詰まると猶予は 12 ティックまで落ちる。
+ */
+const HOP_CLEARANCE = 40;
+
+/**
+ * 降ってくる相手に答えを出し始める残りフレーム。
+ *
+ * 空中スキルは発生 4〜6 フレームしかない（メイドの天空斬り 4F・
+ * 剣士の急降下斬り 5F・狂戦士の斧蹴り 6F）。技が出てから見ていたのでは、
+ * 気づいた時点で残り 4 フレームしか無く、**ガード以外のどの手も間に合わない**。
+ * しかもそれらは軒並みガードを崩すので、ガードも答えにならない。
+ * 見るべき合図は技ではなく**跳ばれたこと**で、そちらは降りてくるまで
+ * 30〜50 フレームある。
+ *
+ * とはいえ跳ばれた瞬間から身構えると、今度は跳ばれるたびに足が止まって
+ * 攻めどころを丸ごと失う。**降りてくるのが見えてから**動き出すための線引き。
+ */
+const AIR_REACT = 34;
+
+/** 落下の見通しを立てる上限（ティック）。跳んで降りるまでが 60 ほど。 */
+const AIR_LOOKAHEAD = 72;
+
+/**
+ * ここより発生が遅い空中技は「見てから対応できる技」として扱い、
+ * 普通の攻撃と同じ経路に流す。速い技だけを跳んだ時点で読む。
+ */
+const AIR_FAST = 14;
+
+/**
+ * 降ってきた判定が「自分に届いた」と数える高さ ＝ 立ちのやられ判定の上端。
+ *
+ * ここを胸の高さまで下げて甘く見ていた頃は、**横に伸びてくる空中技を
+ * 見落としていた**。キャヴァリアのドリルは高さ 40〜200 をほぼ水平に走るので、
+ * 「まだ高いから下をくぐれる」と読んで正面から突っ込むことになる。
+ * 当たるかどうかは判定とやられ判定が重なるかどうかでしかない。
+ */
+const AIR_CONTACT_Y = HURTBOX.h;
+
+/**
+ * 対空を振る窓（ティック）。発生ぶん手前で振り始めて、落ちてくるところに
+ * 判定を置く。早すぎると振り終わった上から刺され、遅いと出る前に潰される。
+ *
+ * 広げても得にならない。降り技を読んだ 3416 回のうち振れるのは 11.9% しか
+ * 無いので**跳ばれたら足で外す**動きになりがちだが、窓を 10・16 と広げ、
+ * 重みと射程も足して総当たりしたところ、どの組み合わせでも与ダメが落ちて
+ * 被ダメが増えた（538.8/526.0 → 最良でも 533.8/531.0）。
+ * 落ちてくる相手に振り勝てる形はもともと狭い。
+ */
+const AIR_SWING_WINDOW = 7;
+
+/**
+ * 背中にこれだけ無いと「詰められている」。
+ *
+ * 仕切り直しの下がりはダッシュで 12 ティック ＝ 90 ほど進むので、
+ * 220 は**それが 2 回入らない**幅。ここを切ると、下がる手は距離を買う手ではなく
+ * 「壁までの残りを使い切る手」に変わる。間合いは同じまま、逃げ道だけが減る。
+ */
+const CORNER_ROOM = 220;
+
+/**
+ * 壁を背負っても、下がる手を完全には捨てない下限。
+ *
+ * 0 にすると、来ている技を下がって空振らせる手まで消える。壁際でも
+ * 「あと一歩下がれば先端が届かない」は成立するので、選べる形では残す。
+ */
+const CORNER_FLOOR = 0.25;
+
+/**
+ * 相手を壁に詰めているときの攻めの割り増し。
+ *
+ * 詰めた相手は下がって仕切り直せない ＝ こちらの技を受けるか手を出すかしか
+ * 無くなる。攻めがいちばん通る場面。
+ *
+ * ただしこの倍率そのものの効きは小さい。振る手は同じ手の重みを落とす仕組みと
+ * クールダウンで頭打ちになるので、掛けても実測で 46.3% → 46.4% しか動かない。
+ * 詰めた状況で実際に効いているのは**離れ直す手を出さないこと**の方で
+ * （下がりが 20% → 6%）、そちらは重みではなく候補そのものを消して作っている。
+ */
+const CORNER_PRESS = 1.6;
+
+/**
+ * 降り技持ちへ跳び込んでよいと言える、相手の硬直の長さ（フレーム）。
+ *
+ * 跳んでから着地するまでは、身長ぶんの跳躍で 50 フレーム前後。相手の硬直が
+ * それより長く残っているなら、こちらが降りて動けるようになるまで相手は
+ * 何も返せない。余裕を足して 56 で見る。
+ */
+const JUMP_IN_SAFE = 56;
+
+/**
+ * 置き技を読む先の長さ（ティック）。跳んで降りるまでが 60 ほどなので、
+ * 昇りの途中で読み始めても着地までは追い切れる。
+ */
+const PLACE_LOOKAHEAD = 48;
+
+/**
+ * 置きが成立する窓（ティック）。
+ *
+ * 「相手が判定の中に入ってくるのが、自分の発生の何ティック後か」を見る。
+ * 0 なら発生と同時に飛び込んでくる ＝ ぴったり置けている。
+ * 広げすぎると**まだ来てもいない相手に振る**ただの空振りになる。
+ */
+const PLACE_WINDOW = 8;
+
 /** 気分の持続（ティック）。数秒ごとに攻めっ気と守りっ気が入れ替わる。 */
 const MOOD_MIN = 90;
 const MOOD_MAX = 220;
+
+/**
+ * 手を出さずにいられる長さ（ティック）。
+ *
+ * 避ける手はどれも「当たらない」という一点では常に正しい。だから危ないものが
+ * 次々に見えている限り、CPU はいつまでも正しく下がり続けられてしまう。
+ * 一手ずつ見れば全部合っているのに、試合として見ると何もしていない。
+ *
+ * ここを超えても手が出ていないなら、多少割に合わなくても攻めへ寄せる。
+ * 重みを足すだけなので、**ほかに手が無い場面（forced）までは崩さない**。
+ */
+const PATIENCE = 72;
+
+/**
+ * 攻めへの寄せの上限。
+ *
+ * 青天井にすると、待っていれば必ず突っ込んでくる CPU になって
+ * 「下がって待つ」だけで勝てるようになる。攻め手が守り手と並ぶあたりで止める。
+ */
+const PATIENCE_MAX = 1.6;
 
 /** キャラ定義ごとの技の性能。技データから割り出したものを覚えておく。 */
 const PROFILES = new WeakMap();
@@ -145,24 +306,43 @@ export function profileOf(def) {
   if (cached) return cached;
 
   const scan = (id) => {
-    let move = def.moves[id];
+    let move = id ? def.moves[id] : null;
+    if (!move) return null;
     let reach = 0;
     let travel = 0;
     let startup = Infinity;
     let projectile = false;
     let grab = false;
+    let guardBreak = false;
+    let low = Infinity;
+    let top = -Infinity;
+    let drop = 0;
+    let lunge = 0;
     let offset = 0;
     let total = 0;
+    let wardFrame = Infinity;
     for (let guard = 0; move && guard < 4; guard += 1) {
+      // 結界を張る技か。張れるまでのフレームが分からないと、間に合うか測れない
+      if (move.ward) wardFrame = Math.min(wardFrame, offset + move.ward.frame);
       for (const h of move.hits) {
         reach = Math.max(reach, h.box.x + h.box.w);
         startup = Math.min(startup, offset + h.start);
+        // 判定の上下端。対空で「そこまで手が届くか」を測るのに使う
+        low = Math.min(low, h.box.y);
+        top = Math.max(top, h.box.y + h.box.h);
         if (h.grab) grab = true;
+        if (h.guardBreak === true) guardBreak = true;
       }
       // 踏み込む技は移動ぶんだけ遠くまで届く。
       // 剣士のタックルは判定リーチ 142 でも、182 前進するので実際は 324 届く。
       for (const m of move.motion) {
-        if ((m.vx ?? 0) > 0) travel += m.vx * (m.end - m.start + 1);
+        if ((m.vx ?? 0) > 0) {
+          travel += m.vx * (m.end - m.start + 1);
+          lunge = Math.max(lunge, m.vx);
+        }
+        // 落ちる速さ。急降下技は重力ではなく技データが速さを決めていて、
+        // メイドの天空斬りは 15／ティック ＝ 重力任せの落下の 5 倍で降りてくる。
+        if ((m.vy ?? 0) < 0) drop = Math.max(drop, -m.vy);
       }
       // 飛び道具は自分では判定を持たないので、発生は弾を撃つフレームで数える。
       // spawns には演出も混ざる（照射の溜めが出す魔法陣など）ので、
@@ -178,6 +358,10 @@ export function profileOf(def) {
       total = offset;
       move = move.onEnd ? def.moves[move.onEnd] : null;
     }
+    // 弾は画面の向こうまで届くものとして扱う。判定そのものの長さは
+    // `hitbox` / `reachOnly` に残しておく（下駄を履かせた射程と混ぜない）。
+    const hitbox = reach > 0;
+    const reachOnly = reach + HURT_HALF;
     if (projectile) reach = Math.max(reach, PROJECTILE_REACH);
     return {
       /** 判定が届く距離（相手のやられ判定ぶんを含む実効射程）。 */
@@ -198,12 +382,127 @@ export function profileOf(def) {
        * **相手が空中にいると絶対に当たらない**ので、振る条件が普通の技と違う。
        */
       grab,
+      /** ガードを崩す技か。受けに回った時点で負けるので、答えが変わる。 */
+      guardBreak,
+      /**
+       * 打撃判定を持つか（＝弾ではなく体で当てに来る技か）。
+       *
+       * 空中技を見るときにこれが要る。弾を撃つだけの空中技（魔法使いの流星・
+       * 女子高生の空中レーザー）は弾として飛んでくるので `_incomingProjectile()` の
+       * 担当で、降ってくる脅威と一緒に数えると「跳ばれるたびに下がる」だけになる。
+       */
+      hitbox,
+      /**
+       * 踏み込みぶんを足さない、判定そのものの射程。
+       *
+       * `range` は前進量を足した「最終的にどこまで届くか」なので、
+       * **相手の移動を別に読んでいるときに使うと前進を二重に数える**。
+       * 降ってくる相手の軌道を追うときはこちらを使う。
+       */
+      reachOnly,
+      /** 判定の下端・上端（足元原点）。対空とくぐりの可否を測る。 */
+      low: Number.isFinite(low) ? low : 0,
+      top: Number.isFinite(top) ? top : 0,
+      /** 技が決める落下速度（0 なら重力任せ）。急降下技を読むのに要る。 */
+      drop,
+      /** 技が決める前進速度。降りながら詰めてくるぶん。 */
+      lunge,
+      /**
+       * 結界を張れる技か。張れるまでの frame（張れないなら Infinity）。
+       *
+       * 結界は打撃も普通の弾も素通しなので、判定の射程で測ると
+       * 「何も起きない技」に見える（`harmless`）。実際に止めるのは
+       * **ガード不能の技と掴みだけ**で、それはこちらが一番答えを持って
+       * いない攻撃でもある。射程ではなく「何を無効にするか」で見ないと、
+       * 巫女はスキルを一度も使わないまま終わる。
+       */
+      wardFrame,
     };
   };
 
-  const profile = { attack: scan(def.attackMove), skill: scan(def.skillMove) };
+  const profile = {
+    attack: scan(def.attackMove),
+    skill: scan(def.skillMove),
+    /**
+     * 空中で出る技。**発生が 4〜6 フレームしかないものが多い**ので、
+     * 出てから見て選べる手は無い。跳ばれた時点で答えを決めるために、
+     * 何が降ってくるのかを先に割り出しておく。
+     */
+    airAttack: scan(def.airAttackMove),
+    airSkill: scan(def.airSkillMove),
+  };
   PROFILES.set(def, profile);
   return profile;
+}
+
+/**
+ * 相手が着地するまでの残りティック。
+ *
+ * 降り技への答えは**降り切るまで押し続けて**初めて成立するので、決めた手を
+ * どれだけ維持するかはここで決まる。途中で持ち時間が切れると、下がり切る手前で
+ * 判断を引き直して、**逃げている最中に突っ込みへ切り替わる**
+ * （実測でも、下がって間合いを取り切ったところで走り出して刺されていた）。
+ *
+ * 上がっている最中なら昇り切ってから落ちるまでを数える。急降下技に入られると
+ * これより早く着くが、そのぶん維持する時間が余るだけなので害は無い。
+ */
+function airTimeOf(foe) {
+  let y = foe.y;
+  let vy = foe.vy;
+  for (let t = 1; t <= AIR_LOOKAHEAD; t += 1) {
+    y += vy;
+    vy -= GRAVITY;
+    if (y <= 0) return t;
+  }
+  return AIR_LOOKAHEAD;
+}
+
+/**
+ * 「見てから対応できない降り技」を持つキャラか。
+ *
+ * 発生 4〜6 フレームの空中スキルは、出てから見て選べる手が無い。
+ * 相手がこれを持っているだけで**こちらは跳べなくなる**ので、
+ * 技が出ているかどうかとは別に、持っているかどうかを見る場面がある。
+ */
+export function hasFastDive(def) {
+  const prof = profileOf(def);
+  return [prof.airAttack, prof.airSkill].some(
+    (p) => p && p.hitbox && !p.projectile && p.startup <= AIR_FAST
+  );
+}
+
+/**
+ * その技が最終的に判定を持つか、そしてどこまで届くか。
+ *
+ * **直下の `hits` だけを見てはいけない。** 判定を `onEnd` の先に置いている技が
+ * あって、格闘娘の回転かかと落とし（弧を描くだけで、蹴りは繋ぎ先の
+ * かかと振り下ろし）とキャヴァリアの急降下ブーストがそれ。
+ * 直下だけで数えると「当たらない技」に見えるので、繋ぐ候補から外れるうえ、
+ * `_maskHitlessChains()` がボタンごと落としてしまう。実際この 2 つは、
+ * 900 試合を通して一度も出ていなかった。
+ */
+function chainPayload(def, id) {
+  let move = def.moves[id];
+  let reach = 0;
+  let hits = false;
+  for (let guard = 0; move && guard < 4; guard += 1) {
+    for (const h of move.hits) {
+      hits = true;
+      reach = Math.max(reach, h.box.x + h.box.w);
+    }
+    move = move.onEnd ? def.moves[move.onEnd] : null;
+  }
+  return { hits, reach };
+}
+
+/** 攻めの手か。気分と我慢切れ、どちらの寄せもこの区別で効く。 */
+function isPush(act) {
+  return act === 'attack' || act === 'skill' || act === 'rush' || act === 'jumpIn';
+}
+
+/** 守りの手か。 */
+function isHold(act) {
+  return act === 'guard' || act === 'retreat' || act === 'duck' || act === 'wait';
 }
 
 export class CpuController {
@@ -215,10 +514,50 @@ export class CpuController {
     this.index = index;
     this.cfg = DIFFICULTY[level] ?? DIFFICULTY.normal;
     this.plan = { bits: 0, ticks: 0 };
+    /**
+     * 次に技を振れるようになるまで。振る手を散らすための間。
+     *
+     * **打撃とスキルで別々に持つ。** ひとつの数え上げで両方を止めていた頃は、
+     * スキルを 1 回振っただけで、その長いクールダウン（照射なら 150 ティック
+     * ＝ 2.5 秒）のあいだ**普通の打撃まで振れなく**なっていた。
+     * 大技を出したあと数秒なにもしないように見えるのはこれが原因で、
+     * 「攻めない」の正体の半分はここだった。
+     */
     this.cooldown = 0;
+    this.skillCd = 0;
+    /**
+     * 前のティックに実際に出した入力。
+     *
+     * 連携は**押した瞬間**（`input & ~prevInput`）しか拾われないので、
+     * すでに押しっぱなしのボタンをもう一度「押す」ことはできない。
+     * 繋ぐには一度離す必要があり、そのためには今なにを押しているかを
+     * 覚えておくしかない。
+     */
+    this.lastBits = 0;
+    /**
+     * いま繋いでいる連携で、すでに通った技。
+     *
+     * 同じところをぐるぐる回らないために要る。格闘娘の 4 段目は攻撃で
+     * 1 段目へ戻るので、**通った先を覚えていないと永久に殴り続けるか、
+     * 毎回同じところで分岐する**かのどちらかになる。まだ通っていない方を
+     * 選べば、4 段まで繋いでから締めのスキルへ自然に流れる。
+     */
+    this.chainSeen = [];
+    /** 狙って押している「判定を持たない連携」。ボタン落としの例外にする。 */
+    this.intentChain = null;
     /** 直前に選んだ手と、それが続いた回数。同じ答えの連続を避けるのに使う。 */
     this.lastAct = '';
     this.repeat = 0;
+    /** いま走らせている判断が、降ってくる相手への答えか。 */
+    this.answeringAir = false;
+    /**
+     * その降り技に対して選んだ手。相手が降り切るまでは変えない。
+     *
+     * 混ぜてよいのは「どちらでも助かる」ときだけで、降ってくる相手に対しては
+     * **下がると詰めるが正反対の意味を持つ**。持ち時間が切れるたびに選び直すと、
+     * 下がり切ったところで詰めに転じて自分から当たりに行くことになる。
+     */
+    this.airAct = null;
     /**
      * 気分。'push'（攻め） / 'hold'（守り） / 'even'（ふつう）を
      * 数秒ごとに切り替える。同じ状況でも局面によって答えが変わるので、
@@ -226,6 +565,14 @@ export class CpuController {
      */
     this.mood = 'even';
     this.moodTicks = 0;
+    /**
+     * 手を出さずに過ごしたティック数。攻めっ気の下限を作るのに使う（PATIENCE）。
+     *
+     * 気分（mood）とは別に要る。あちらは**何が起きても**数秒ごとに揺れるだけで、
+     * 「守りが正しい状況が続いている」ことには気づけない。避け続けて手が出て
+     * いないという事実を数えられるのはここだけ。
+     */
+    this.idle = 0;
     /**
      * 最後に相手の姿を見た X 座標。
      *
@@ -298,9 +645,19 @@ export class CpuController {
     if (opponent.state !== STATE.MOVE) return false;
     const hits = this._upcomingHits(opponent);
     if (hits.length === 0) return false;
-    // 空中から撃たれていれば判定はさらに高いので、そのぶん下駄を履かせる
-    const lift = opponent.y;
-    return hits.every((h) => h.box.y + lift >= CROUCH_CLEAR_Y);
+    /**
+     * 高さの下駄は履かせない。
+     *
+     * 「今どれだけ浮いているか」で測ると、**落ちてくる技を見誤る**。
+     * メイドの天空斬りは昇り切ったところから地面まで落ちてくるので、
+     * 浮いている高さで見ると「はるか頭上を通る技」に見えて、
+     * しゃがんだまま真上から刺される（実測でメイドに負けた 116 回のうち
+     * 50 回がしゃがみ中の被弾だった）。
+     * 落ち切ったところ＝地上に置いて測れば、この読み違えは起きない。
+     * 浮いたまま撃つ技（魔法使いの浮遊照射）は元の判定が高いので、
+     * 下駄が無くてもくぐれると分かる。
+     */
+    return hits.every((h) => h.box.y >= CROUCH_CLEAR_Y);
   }
 
   /**
@@ -310,7 +667,7 @@ export class CpuController {
    *
    * 連携（キャンセル）の受付が開いている区間は、続けて振られる可能性が
    * あるので隙とは見なさない。ここを隙として踏み込むと、繋がれた 2 段目に
-   * そのまま刺されて損をする（実測でも突っ込む相手に대して勝率が 10 ポイント落ちた）。
+   * そのまま刺されて損をする（実測でも突っ込む相手に対して勝率が 10 ポイント落ちた）。
    *
    * @returns {number} 差し込める猶予フレーム。0 なら隙ではない。
    */
@@ -329,11 +686,24 @@ export class CpuController {
     if (opponent.state === STATE.LAND) {
       return Math.max(0, opponent.landLag - opponent.stateTimer);
     }
-    // 技の戻り。判定を出し切っていて、繋ぎ先も連携受付も無い区間
+    // 技の戻り。危ないところを出し切っていて、繋ぎ先も連携受付も無い区間
     if (opponent.state === STATE.MOVE) {
       const move = opponent.currentMove();
-      if (!move || move.onEnd || move.hits.length === 0) return 0;
-      const last = Math.max(...move.hits.map((h) => h.end));
+      if (!move || move.onEnd) return 0;
+      /**
+       * 危ないのはいつまでか。判定の終わりと**弾を撃つフレーム**の遅い方で決まる。
+       *
+       * 判定の有無だけで見ていると、自分では判定を持たない技
+       * （女子高生の指さし 40F・魔法使いの詠唱 26F・忍者の煙玉）の戻りが
+       * **まるごと隙として見えない**。弾を撃つ相手にだけ差し込めない CPU に
+       * なっていたのはこれが原因で、指さしを連打されると、
+       * 一番差し込みやすい 40 フレームを毎回見送っていた。
+       */
+      let last = -1;
+      for (const h of move.hits) last = Math.max(last, h.end);
+      for (const sp of move.spawns) {
+        if (isProjectile(sp.type)) last = Math.max(last, sp.frame ?? 0);
+      }
       if (opponent.moveFrame <= last) return 0;
       const chainOpen = move.chains.some(
         (c) => opponent.moveFrame >= c.from - 2 && opponent.moveFrame <= c.to
@@ -377,6 +747,279 @@ export class CpuController {
       }
     }
     return best;
+  }
+
+  /**
+   * 頭上から降ってくる脅威。**技ではなく跳んだこと**を見る。
+   *
+   * 空中スキルは発生 4〜6 フレームなので、技が出てから測ったのでは
+   * `_framesUntilHit()` が 4 を返すだけで、逃げるにも潰すにも足りない。
+   * 一方、跳んで降りてくるまでは 30〜50 フレームあり、そこは重力に任せた
+   * ただの放物線なので**先の位置が読める**。読んだ接触点までの時間を持ち時間にして、
+   * 降ってくる前に答えを置いておく。
+   *
+   * 弾を撃つだけの空中技（魔法使いの流星・女子高生の空中レーザー）はここでは見ない。
+   * あれは弾として飛んでくるので `_incomingProjectile()` の担当で、
+   * ここで一緒に数えると「跳ばれるたびに下がる」だけの CPU になる。
+   *
+   * @returns {{frames:number, dist:number, y:number, reach:number,
+   *            guardBreak:boolean, low:number} | null}
+   */
+  _airThreat(me, foe, myVx = 0) {
+    if (!foe.airborne || foe.invulnerable || foe.isKO || foe.isVanished) return null;
+    const prof = profileOf(foe.def);
+    /**
+     * 見るのは「出てからでは間に合わない速さの空中技」だけ。
+     *
+     * 溜めの長い空中技（忍者の竜巻 64F・魔法使いの浮遊照射 62F・
+     * 挌闘家の踵落とし 36F）は、出てから見ても十分に手が打てるので
+     * `_incomingAttack()` 側の担当。ここに混ぜると「跳ばれたら必ず下がる」
+     * だけの CPU になり、詰めどころを丸ごと失う。
+     */
+    const air = [prof.airAttack, prof.airSkill].filter(
+      (p) => p && p.hitbox && !p.projectile && p.startup <= AIR_FAST
+    );
+    if (air.length === 0) return null;
+    const reach = Math.max(...air.map((p) => p.reachOnly));
+    /**
+     * 前進ぶんまで含めた「最終的にどこまで届くか」。
+     *
+     * 潜りに行ってよいかはこちらで測る。判定そのものの長さで測ると、
+     * キャヴァリアのドリル（判定 208・突進を足すと 518）を
+     * 「210 離れていれば外側」と読み違えて、**伸びてくる判定へ自分から
+     * 走り込む**ことになる（実測でこれが被弾の最多形だった）。
+     */
+    const danger = Math.max(...air.map((p) => p.range));
+    const low = Math.min(...air.map((p) => p.low));
+    const top = Math.max(...air.map((p) => p.top));
+    const drop = Math.max(...air.map((p) => p.drop));
+    const lunge = Math.max(...air.map((p) => p.lunge));
+    const guardBreak = air.some((p) => p.guardBreak);
+    /**
+     * 踏み切ってから判定が出るまで。まだ技を出していないなら、
+     * **少なくともこれだけは落ちてこられない**。
+     *
+     * ここを 0 として「いつでも真下に落ちてくる」と読むと、天空斬りのように
+     * 速く落ちる技に対しては常に「6 フレームで届く＝何をしても間に合わない」と
+     * 出てしまい、実際には間に合う下がりまで捨てて壁に貼り付くことになる。
+     */
+    const lead = foe.state === STATE.MOVE ? 0 : Math.min(...air.map((p) => p.startup));
+
+    /**
+     * 「いま踏み切られたら、いつ届くか」を読む。
+     *
+     * 落ちる速さは重力ではなく**技データ**で決まる。天空斬りは 15／ティックで
+     * 降りてきて、重力任せの落下より 5 倍速い。重力で見積もると
+     * **一番速い技を一番遅く見積もる**ことになり、余裕があると思ったまま刺される。
+     * 横も同じで、降りながら前進する技はその速さで詰めてくる。
+     *
+     * どちらも「相手がこれから選べる最悪の手」で見る。読み違えたときに
+     * 早く下がりすぎるだけで済み、遅れて刺されることにはならない。
+     *
+     * ただし横は**跳んだ勢いの向きまで裏返さない**。速さの絶対値を取って
+     * 必ずこちらへ向けていた頃は、後ろへ跳ばれても「突っ込んで来る」と読んで
+     * いた。プレイヤーが跳ぶたびに CPU が下がり出すのはこれが原因で、
+     * 相手が離れていく跳びまで降り技として数えていた。
+     *
+     * 見るべきなのは「技の踏み込みぶんは必ずこちらへ向く」ということだけ。
+     * 跳んだ勢いは向いている向きのまま足し、そこに踏み込みを重ねる。
+     * 後ろへ跳ばれたときは踏み込みぶん（＝0 なら止まっている扱い）で読むので、
+     * 離れる跳びは降り技として数えなくなる。
+     */
+    const toward = Math.sign(me.x - foe.x) || 1;
+    const vx = Math.max(foe.vx * toward, lunge) * toward;
+    let x = foe.x;
+    let y = foe.y;
+    let vy = foe.vy;
+    let mx = me.x;
+    for (let t = 1; t <= AIR_LOOKAHEAD; t += 1) {
+      x += vx;
+      // 逃げ切れるかを試すときは、自分も動かしてみる。
+      // 壁で止まるところまで入れないと、隅に詰まっているのに
+      // 「下がれば外せる」と読んでしまう。
+      mx = Math.min(STAGE_WIDTH - STAGE_MARGIN, Math.max(STAGE_MARGIN, mx + myVx));
+      if (t <= lead) {
+        // まだ技が出せない区間。跳んだ勢いのまま飛んでいる
+        y = Math.max(0, y + vy);
+        vy -= GRAVITY;
+      } else if (drop > 0) {
+        y = Math.max(0, y - drop);
+      } else {
+        y = Math.max(0, y + vy);
+        vy -= GRAVITY;
+      }
+      const gap = Math.abs(x - mx);
+      // 判定が自分の体の高さまで降りてきて、間合いにも入ったところが接触点。
+      // 頭のてっぺんを掠める高さで数え始めると、跳んだ瞬間から「もう手遅れ」に
+      // なってしまうので、胸の高さまで降りてきたところで見る。
+      if (gap <= reach && y + low <= AIR_CONTACT_Y && y + top >= 0) {
+        return { frames: t, dist: gap, y, reach, danger, guardBreak, low, landIn: airTimeOf(foe) };
+      }
+      if (y <= 0) break;
+    }
+    return null;
+  }
+
+  /**
+   * その向きへ走れば、降り技を空振らせられるか。
+   *
+   * 「接触するフレームまでに間合いの外へ出られるか」で測ってはいけない。
+   * 天空斬りは真上から 6 フレームで届くので、その測り方だとどんな距離でも
+   * 「間に合わない」と出て、CPU は歩いて下がるだけになり結局刺される。
+   * 実際に見るべきは**相手が降り切るまで捕まらずにいられるか**なので、
+   * 自分が走っている前提でもう一度軌道を引き直して確かめる。
+   *
+   * 前へ走る場合もこれで測れる。相手が高いうちに下をくぐれば、判定が降りて
+   * くる頃には背後にいて当たらない ＝ 軌道を引き直せば接触点が消える。
+   * 壁での頭打ちも `_airThreat()` の中で見ているので、隅で「下がれば外せる」と
+   * 読み違えることもない。
+   *
+   * 返すのは「外せる／外せない」ではなく**捕まるまでの時間**にしてある。
+   * 軌道は「相手がいま最悪の手を選んだら」で引いているので、外せないと出ても
+   * 実際には間に合うことが多い。二択で切ると、間に合う下がりまで
+   * 「どうせ無理」と捨てて壁に貼り付くことになる。稼げる時間で比べれば、
+   * 完全に外せなくても**いちばん長く逃げられる向き**を選べる。
+   *
+   * @param {1|-1} dir 走る向き（ワールド座標。+1 が右）
+   * @returns {number} その向きへ走ったときに捕まるまでのフレーム数。
+   *                   捕まらないなら Infinity。
+   */
+  _diveEscape(me, foe, dir) {
+    const hit = this._airThreat(me, foe, dir * me.def.dashSpeed);
+    return hit ? hit.frames : Infinity;
+  }
+
+  /**
+   * いま押せば繋がる連携（コンボ）があるか。
+   *
+   * 技の最中は**どのみち動けない**ので、ここで押すかどうかは守りの判断と
+   * competing しない。純粋に「もう一段入れて得か」だけの話になる。
+   *
+   * 技が当たったかどうかを sim は覚えていないので、繋いでよい形かは
+   * 相手の様子で見る。のけぞり・ガード硬直に入っているなら当たっている ＝
+   * 次も入る。そうでなくても、繋ぎ先の判定が届く距離にいるなら振る価値がある。
+   * 遠くで空振っている最中に繋ぐのは、硬直を伸ばして差し返されるだけなので出さない。
+   *
+   * 判定を持たない連携先（キャヴァリアの後退ブースト）はここでは拾わない。
+   * あれは `_maskHitlessChains()` が落とす担当で、押して得な手ではない。
+   *
+   * 繋ぎ先が複数開いているなら**全部返す**。1 つ目で打ち切っていた頃は、
+   * 技の定義に書いてある順（たいてい攻撃が先）でいつも同じ側へ流れていて、
+   * スキル側の繋ぎ（格闘娘の踵落とし・飛び蹴り）が一度も出なかった。
+   *
+   * @returns {{bits:number, move:string}[]}
+   */
+  _chainOptions(me, foe, dist) {
+    if (me.state !== STATE.MOVE) return [];
+    const move = me.currentMove();
+    if (!move) return [];
+    // 空中の連携回数を使い切っていると、窓が開いていても受け付けられない
+    const airLimit = me.def.airChainLimit;
+    if (me.airborne && airLimit != null && me.airChains >= airLimit) return [];
+
+    const confirmed =
+      foe.state === STATE.HIT || foe.state === STATE.BLOCK || foe.state === STATE.GUARD_BREAK;
+    const out = [];
+    for (const c of move.chains) {
+      if (me.moveFrame < c.from || me.moveFrame > c.to) continue;
+      const pay = chainPayload(me.def, c.move);
+      if (!pay.hits) continue;
+      if (!confirmed) {
+        // 当たった手応えが無いなら、せめて届く位置にいること
+        if (dist > pay.reach + HURT_HALF) continue;
+      }
+      out.push({ bits: c.button === 'skill' ? BTN.SKILL : BTN.ATTACK, move: c.move });
+    }
+    /**
+     * 選ぶ順は「まだ通っていない先」→「攻撃側」。
+     *
+     * 連携はたいてい、攻撃ボタンで段を伸ばして、スキルで締める形に
+     * なっている。毎回どちらかを等確率で選ぶと**半分は 1 段目で締めて**
+     * しまい、格闘娘の 4 段目は 900 試合で 1 回しか出なかった。
+     * 伸ばせるうちは伸ばして、行き止まり（通った先しか残っていない）に
+     * なったら締めへ回す方が、素直に減る。
+     */
+    const fresh = out.filter((o) => !this.chainSeen.includes(o.move));
+    const pool = fresh.length > 0 ? fresh : out;
+    const push = pool.filter((o) => o.bits === BTN.ATTACK);
+    return push.length > 0 ? push : pool;
+  }
+
+  /**
+   * 判定は持たないが、**降りるために押す**連携。
+   *
+   * キャヴァリアの錐揉み突進は高度を保ったまま横へ抜けるので、放っておくと
+   * 相手の向こう側で落下と着地硬直（20）を晒す。宙返り降下へ繋ぐと自分から
+   * 斜め前へ降りられて、着地硬直も 14 で済む。判定が無いので攻めの手では
+   * なく、**空振ったあとの帰り道**として押す手。
+   *
+   * 自分の判定がまだ残っているうちに切り上げるのは損なので、出し切ってから。
+   *
+   * @returns {{bits:number, move:string} | null}
+   */
+  _recoverChain(me) {
+    if (!me.airborne || me.state !== STATE.MOVE) return null;
+    const move = me.currentMove();
+    if (!move) return null;
+    let last = -1;
+    for (const h of move.hits) last = Math.max(last, h.end);
+    if (me.moveFrame <= last) return null;
+    for (const c of move.chains) {
+      if (me.moveFrame < c.from || me.moveFrame > c.to) continue;
+      const next = me.def.moves[c.move];
+      if (!next || chainPayload(me.def, c.move).hits) continue;
+      if ((next.landLag ?? 0) < (move.landLag ?? 0)) {
+        return { bits: c.button === 'skill' ? BTN.SKILL : BTN.ATTACK, move: c.move };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * 置き技。相手が来るところへ、先に判定を出しておくための読み。
+   *
+   * 振る手を「届いてから」選んでいると、発生ぶんだけ必ず遅れる。降ってくる
+   * 相手に対して対空が振れたのは読んだ 3416 回のうち 11.9% だけで、
+   * いちばん多い不成立の理由（44.6%）が**気づいた時点でもう発生が
+   * 間に合わない**だった。逆に言えば、遅れているのは判断ではなく振り始めで、
+   * 相手が来る前に振っておけば同じ技がそのまま間に合う。
+   *
+   * 読むのは相手の**実際の軌道**。降り技の読み（`_airThreat`）が
+   * 「相手が選べる最悪の手」で見るのと違って、こちらは当てに行く側なので
+   * 外れても空振りで済む。最悪を仮定すると置ける場面がほとんど無くなる。
+   *
+   * @returns {number} 判定の中へ入ってくるまでのティック。届かないなら -1
+   */
+  _placeWindow(me, foe, atk) {
+    if (atk.harmless || atk.range <= 0) return -1;
+    let x = foe.x;
+    let y = foe.y;
+    let vy = foe.vy;
+    for (let t = 1; t <= PLACE_LOOKAHEAD; t += 1) {
+      x = Math.min(STAGE_WIDTH - STAGE_MARGIN, Math.max(STAGE_MARGIN, x + foe.vx));
+      if (y > 0 || vy > 0) {
+        y = Math.max(0, y + vy);
+        vy -= GRAVITY;
+      }
+      // 判定とやられ判定が、横にも縦にも重なったところが当たるところ
+      const gap = Math.abs(x - me.x);
+      if (gap <= atk.range && y <= atk.top && y + HURTBOX.h >= atk.low) return t;
+    }
+    return -1;
+  }
+
+  /**
+   * 背中側に残っている距離。壁までどれだけ下がれるか。
+   *
+   * 下がる手の値打ちはここで決まる。間合いだけを見ていると、壁を背負ってからも
+   * 「離れれば安全」と読み続けてしまうが、**壁際の下がりは距離を買わない**。
+   * 買えるのは壁までの残りぶんだけで、使い切ったあとは同じ間合いのまま
+   * 選べる手だけが減っている。
+   *
+   * @param {number} foeX 相手の位置（煙玉で消えている間は最後に見た位置）
+   */
+  _backRoom(me, foeX) {
+    return foeX >= me.x ? me.x - STAGE_MARGIN : STAGE_WIDTH - STAGE_MARGIN - me.x;
   }
 
   /** いちばん近い相手の弾との距離。2段ジャンプの 2段目の合図に使う。 */
@@ -426,6 +1069,41 @@ export class CpuController {
     return hits.length > 0 && hits.every((h) => h.grab);
   }
 
+  /**
+   * これから来るのがガードを崩す技（＝スキル）か。
+   *
+   * このゲームのスキルは例外なく `guardBreak` を持つ。ガードは止められないうえ、
+   * 割られたぶん硬直が伸びる（GUARD_BREAK_EXTRA）ので、**固めるのは
+   * 何もしないより悪い**。
+   *
+   * これを見ていないと、CPU は「一番確実な手」としてガードを選び続ける。
+   * スキルを連打されたときに一番効くのがこの判断で、実測では
+   * ガードしたまま死んだ 184 回がここから出ていた。
+   */
+  _incomingBreak(opponent) {
+    if (opponent.state !== STATE.MOVE) return false;
+    return this._upcomingHits(opponent).some((h) => h.guardBreak === true);
+  }
+
+  /**
+   * これから来る攻撃が出切るまでの残りフレーム。
+   *
+   * 守りを何ティック維持するかはこれで決める。固定値で持つと、
+   * 溜めの長い技（照射は溜め 60 ＋ 照射 34）で途中から無防備になる。
+   */
+  _threatFrames(opponent) {
+    let move = opponent.currentMove();
+    if (!move) return 0;
+    let offset = -opponent.moveFrame;
+    let last = 0;
+    for (let guard = 0; move && guard < 4; guard += 1) {
+      for (const h of move.hits) last = Math.max(last, offset + h.end);
+      offset += move.total;
+      move = move.onEnd ? opponent.def.moves[move.onEnd] : null;
+    }
+    return Math.max(0, last);
+  }
+
   /** 相手の判定が出るまでの残りフレーム。もう出ているなら 0。 */
   _framesUntilHit(opponent) {
     const move = opponent.currentMove();
@@ -450,19 +1128,62 @@ export class CpuController {
    * まだ何も守っていないのに危険が目前なら、考え直す方がよい。
    */
   _mustRethink(sim, me, foe) {
-    // 掴みだけは「守りの手を選んであるから大丈夫」が成立しない。
-    // ガードもしゃがみも通用しないので、固めたまま維持すると毎回そのまま捕まる。
-    // すでに跳んでいるなら答えは合っているので、そのまま続けさせる。
-    if ((this.plan.bits & BTN.UP) === 0 && this._incomingGrab(foe)) {
+    // ガードでは止まらない技（掴み・スキル）だけは、
+    // 「守りの手を選んであるから大丈夫」が成立しない。固めたまま維持すると
+    // 毎回そのまま捕まる／割られる。
+    // 逃げ道を選べているなら答えは合っているので、そのまま続けさせる。
+    if (this._incomingGrab(foe) || this._incomingBreak(foe)) {
+      const escaping =
+        (this.plan.bits & BTN.UP) !== 0 ||
+        ((this.plan.bits & BTN.DOWN) !== 0 && this._isDuckable(foe));
       const until = this._framesUntilHit(foe);
-      if (until >= RETREAT_ESCAPE_FRAMES && Math.abs(foe.x - me.x) <= this._threatRange(foe) + 40) {
+      if (
+        !escaping &&
+        until >= RETREAT_ESCAPE_FRAMES &&
+        Math.abs(foe.x - me.x) <= this._threatRange(foe) + 40
+      ) {
         return true;
       }
     }
 
+    /**
+     * 降ってくる相手。空中スキルは発生 4〜6 フレームなので、
+     * 「判定が見えてから」では前の判断を引きずったまま刺される。
+     * 跳ばれた時点で考え直させる。
+     *
+     * 逆に、**すでに降り技への答えを出してあるなら振り直さない**。
+     * ここを毎ティック考え直すと、下がりかけては止まるを繰り返して
+     * 結局その場から動けない（下がり切るには走り続ける必要がある）。
+     */
+    const air = this._airThreat(me, foe);
+    /**
+     * 降り切ったなら、下がるのをそこでやめる。
+     *
+     * 降り技の着地硬直は長い（天空斬り 24 ティック）。避けた見返りはそこなので、
+     * 持ち時間が切れるまで下がり続けると、**毎回いちばんおいしい隙を見送って
+     * 位置だけ失う**。それを繰り返した先が壁で、実測では被弾 312 回のうち
+     * 199 回が「下がり切って背中が壁」だった。避けたら押し返す。
+     */
+    if (!air && this.answeringAir) return true;
+    if (air) {
+      if (!this.answeringAir) return true;
+      // ガードで受けるつもりだったのに、崩す技を出されたときだけは選び直す
+      if ((this.plan.bits & BTN.GUARD) !== 0 && this._incomingBreak(foe)) return true;
+      return false;
+    }
+
+    const shot = this._incomingProjectile(sim, me);
+
+    // 構えを解くのも判断のうち。危険が過ぎているのにガード／しゃがみを
+    // 抱えたままだと、**相手の戻りをまるごと見送る**ことになる。
+    // スキルは外したときの隙が大きいぶん、ここを拾えるかで差し返しの回数が変わる。
+    if ((this.plan.bits & (BTN.GUARD | BTN.DOWN)) !== 0) {
+      const watching = shot && shot.frames <= PROJECTILE_REACT;
+      if (!this._incomingAttack(foe) && !watching) return true;
+    }
+
     const defending = (this.plan.bits & (BTN.GUARD | BTN.UP | BTN.DOWN)) !== 0;
     if (defending) return false;
-    const shot = this._incomingProjectile(sim, me);
     if (shot && shot.frames <= RETHINK_FRAMES) return true;
     if (this._incomingAttack(foe) && this._framesUntilHit(foe) <= RETHINK_FRAMES) {
       return Math.abs(foe.x - me.x) <= this._threatRange(foe) + 40;
@@ -476,11 +1197,29 @@ export class CpuController {
    * 一番良い手を毎回選ぶと、人間は数ラウンドで読んで対策してくる。
    * 有効な手が複数あるなら混ぜる。あわせて直前と同じ手は重みを落として、
    * 同じ状況で同じ答えを繰り返さないようにしている。
+   *
+   * `impatient` は「手が出ていない時間を重みに乗せてよい場面か」。
+   * **飛んできている技への答えには乗せない**。焦れは間合い争いの話で、
+   * 来ている技に対して焦れて踏み込むのは、避けられる技へ自分から
+   * 当たりに行くのと同じ。実際、照射の溜めに乗せた版は、しゃがんで
+   * くぐれる場面から踏み込みへ乗り換えて 399 ティック目に沈んだ。
    */
-  _choose(rng, options) {
+  _choose(rng, options, impatient = false) {
     let total = 0;
     for (const o of options) {
-      o.w = Math.max(0, o.weight) * (1 + this.moodBias(o.act));
+      // `forced` は「これしか正解が無い」手。混ぜる対象から外す。
+      //
+      // ここを外さないと、**同じ技を連打されたときに 2 回目から重みが 1/4 になる**。
+      // 照射を 1 回しゃがんで避けると、次の照射では正解のしゃがみが軽くなって
+      // ガードを選び直し、そのまま割られる。読まれないための仕組みが、
+      // 答えがひとつしかない場面では自滅の仕組みになっていた。
+      if (o.forced) {
+        o.w = Math.max(0, o.weight);
+        total += o.w;
+        continue;
+      }
+      const patience = impatient ? this.patienceBias(o.act) : 0;
+      o.w = Math.max(0, o.weight) * (1 + this.moodBias(o.act) + patience);
       if (o.act === this.lastAct) o.w *= this.repeat >= 2 ? 0.25 : 0.55;
       total += o.w;
     }
@@ -495,11 +1234,31 @@ export class CpuController {
 
   /** 気分による重みの偏り。攻めっ気・守りっ気を数秒単位で揺らす。 */
   moodBias(act) {
-    const push = act === 'attack' || act === 'skill' || act === 'rush' || act === 'jumpIn';
-    const hold = act === 'guard' || act === 'retreat' || act === 'duck' || act === 'wait';
-    if (this.mood === 'push') return push ? 0.45 : hold ? -0.3 : 0;
-    if (this.mood === 'hold') return hold ? 0.45 : push ? -0.3 : 0;
+    if (this.mood === 'push') return isPush(act) ? 0.45 : isHold(act) ? -0.3 : 0;
+    if (this.mood === 'hold') return isHold(act) ? 0.45 : isPush(act) ? -0.3 : 0;
     return 0;
+  }
+
+  /**
+   * 手が出ていない時間ぶんの、攻めへの寄せ。
+   *
+   * **攻め手を重くするだけで、守り手を軽くはしない**。守りを削ると、
+   * 降り技やガード不能技のように「これしか助からない」手まで薄くなって、
+   * 攻めるようになった代わりに割られる CPU になる。攻め手を積み増して
+   * 相対的に選ばれやすくするだけなら、助かる手は助かる手のまま残る。
+   */
+  patienceBias(act) {
+    /**
+     * 焦れたぶんは**足で運ぶ**。跳び込みには乗せない。
+     *
+     * 跳ぶ手はもともと「跳んでよい状況か」を先に見て重みを削ってある
+     * （弾を持つ相手には 0.12 倍など）。そこへ我慢切れを掛けると、
+     * わざわざ削った意味が消えて、待たされた末に一番刺されやすい手へ
+     * 飛び出すことになる。実際、乗せた版は魔法使い相手に空中で撃たれる形が
+     * 増えて、弾を受けに回れなくなっていた。
+     */
+    if (act === 'jumpIn' || !isPush(act) || this.idle <= PATIENCE) return 0;
+    return Math.min(PATIENCE_MAX, (this.idle - PATIENCE) / PATIENCE);
   }
 
   /**
@@ -520,7 +1279,10 @@ export class CpuController {
     let out = bits;
     for (const c of move.chains) {
       if (me.moveFrame < c.from || me.moveFrame > c.to) continue;
-      if (me.def.moves[c.move].hits.length > 0) continue;
+      if (chainPayload(me.def, c.move).hits) continue;
+      // 自分で選んで押している降り（`_recoverChain`）だけは落とさない。
+      // ここで一緒に落とすと、狙って押した帰り道まで消える
+      if (c.move === this.intentChain) continue;
       if (c.button === 'attack') out &= ~BTN.ATTACK;
       else if (c.button === 'skill') out &= ~BTN.SKILL;
     }
@@ -528,16 +1290,25 @@ export class CpuController {
   }
 
   _commit(option) {
+    // 手を出したら我慢の数えをやり直す。振っただけで数え直すので、
+    // 当たったかどうかは見ない（当たるまで積むと、ガードされ続けたときに
+    // 際限なく突っ込む CPU になる）。
+    if (option.act === 'attack' || option.act === 'skill') this.idle = 0;
     if (option.act === this.lastAct) this.repeat += 1;
     else {
       this.lastAct = option.act;
       this.repeat = 1;
     }
+    // いま走らせている判断が「降り技への答え」かどうかを覚えておく。
+    // 出した答えを毎ティック考え直させないための印（_mustRethink が見る）。
+    this.answeringAir = option.air === true;
+    if (this.answeringAir) this.airAct = option.act;
     // 決めた行動を維持する時間は難易度で伸縮させる。
     // 弱い設定ほど長く引きずり、状況の変化に置いていかれる。
     const base = option.ticks ?? this.cfg.react;
     this.plan = { bits: option.bits, ticks: Math.max(2, Math.round(base * this.cfg.hold)) };
     if (option.cooldown) this.cooldown = option.cooldown;
+    if (option.skillCooldown) this.skillCd = option.skillCooldown;
     return option.bits;
   }
 
@@ -553,7 +1324,9 @@ export class CpuController {
   think(sim) {
     // 決めた入力は最後にここで濾す。連携先が判定を持たない技のときだけ
     // ボタンを落とすので、選択そのものには手を入れなくて済む。
-    return this._maskHitlessChains(sim.fighters[this.index], this._plan(sim));
+    const bits = this._maskHitlessChains(sim.fighters[this.index], this._plan(sim));
+    this.lastBits = bits;
+    return bits;
   }
 
   /** そのティックに出したい入力を決める（濾す前の生の判断）。 */
@@ -563,6 +1336,8 @@ export class CpuController {
     if (!sim.isRunning || me.isKO) return 0;
 
     if (this.cooldown > 0) this.cooldown -= 1;
+    if (this.skillCd > 0) this.skillCd -= 1;
+    this.idle += 1;
 
     // 気分を数秒ごとに入れ替える
     if (this.moodTicks > 0) this.moodTicks -= 1;
@@ -570,6 +1345,61 @@ export class CpuController {
       const roll = sim.rng.next();
       this.mood = roll < 0.34 ? 'push' : roll < 0.68 ? 'hold' : 'even';
       this.moodTicks = sim.rng.int(MOOD_MIN, MOOD_MAX);
+    }
+
+    /**
+     * 連携が繋がる場面なら、持ち時間を待たずにここで拾う。
+     *
+     * **持ち時間の判定より先に見る。** 後ろに置いていた頃は、技を振った
+     * ときの持ち時間（5 ティック前後）が切れるまでここへ来られず、
+     * そのあいだに繋ぎの窓が閉じていた。連携はフレーム単位の話なので、
+     * 「あとで考え直す」では間に合わない。
+     *
+     * 技の最中はどのみち動けないので、守りの手と取り合いにもならない。
+     */
+    // 技を出していないなら連携は途切れている。通った先の記録を捨てる
+    if (me.state !== STATE.MOVE) this.chainSeen = [];
+    /**
+     * ただし**ガードされている連携は伸ばさない**。
+     *
+     * 繋ぐほど相手は固めたまま安全で、こちらの硬直だけが伸びていく。
+     * 崩す手（掴み・ガード崩しのスキル）を持っているなら、そちらへ切り替えた
+     * 方が減る。ここを見ていなかったせいで、サキュバスが固める相手に
+     * 掴みへ行かず、当たらない連携を延々と重ねていた（12 試行中 9 → 6 に低下）。
+     */
+    const myProf = profileOf(me.def);
+    const breaker =
+      !myProf.skill.harmless && (myProf.skill.grab || myProf.skill.guardBreak);
+    const stringBlocked = breaker && this.skillCd === 0 && this._turtling(foe);
+    const chains = stringBlocked ? [] : this._chainOptions(me, foe, Math.abs(foe.x - me.x));
+    if (chains.length > 0) {
+      // int は上限を含まないので、そのまま長さを渡す
+      const pick = chains[sim.rng.int(0, chains.length)];
+      /**
+       * 押しっぱなしでは繋がらない。ボタンは**押した瞬間**だけが入力として
+       * 拾われるので、すでに握っているならまず離す。
+       *
+       * ここを見落としていた頃は、スキルから繋ぐ連携（格闘娘の踵落とし・
+       * 飛び蹴り、キャヴァリアの急降下ブースト）が**一度も出せなかった**。
+       * スキルを振った手がそのままボタンを握り続けていて、繋ぎ先に要る
+       * 押し直しが起きないため。
+       */
+      if ((this.lastBits & pick.bits) !== 0) {
+        return this._commit({ act: 'chain', bits: this.lastBits & ~pick.bits, ticks: 1 });
+      }
+      if (me.moveId && !this.chainSeen.includes(me.moveId)) this.chainSeen.push(me.moveId);
+      this.chainSeen.push(pick.move);
+      return this._commit({ act: 'chain', bits: pick.bits, ticks: 3 });
+    }
+
+    // 攻めの繋ぎが無いなら、降りるための繋ぎを見る
+    const recover = this._recoverChain(me);
+    this.intentChain = recover ? recover.move : null;
+    if (recover) {
+      if ((this.lastBits & recover.bits) !== 0) {
+        return this._commit({ act: 'chain', bits: this.lastBits & ~recover.bits, ticks: 1 });
+      }
+      return this._commit({ act: 'chain', bits: recover.bits, ticks: 3 });
     }
 
     // 決めた行動は数ティック維持する。毎フレーム考え直すと
@@ -601,6 +1431,31 @@ export class CpuController {
     const away = foeX >= me.x ? BTN.LEFT : BTN.RIGHT;
 
     /**
+     * 壁までの余地。攻守どちらの向きにも効く。
+     *
+     * - 自分の背中が近い ＝ 下がる手が距離を買えない。値打ちを落とす
+     * - 相手の背中が近い ＝ 相手は下がって仕切り直せない。攻めが通る
+     *
+     * 位置は見えている前提で測る。煙玉で消えている相手には最後に見た位置を
+     * 使うので、詰めたつもりが外れていることはあるが、それは間合いの読みと同じ
+     * 度合いの外れ方でしかない。
+     */
+    const room = this._backRoom(me, foeX);
+    const foeRoom = this._backRoom(foe, me.x);
+    const cornered = room < CORNER_ROOM;
+    const foeCornered = foeRoom < CORNER_ROOM;
+    /**
+     * 下がる手の値打ち。壁が近いほど落とす。
+     *
+     * 消し切らないのは、壁際でも「あと一歩で先端を空振らせる」が成立するから
+     * （CORNER_FLOOR）。落とすのは「仕切り直しのために下がる」種類の手で、
+     * 来ている技を外すための下がりは別の重みで積んである。
+     */
+    const backW = (w) => w * Math.max(CORNER_FLOOR, Math.min(1, room / CORNER_ROOM));
+    /** 相手を詰めているときの攻めの割り増し。 */
+    const press = foeCornered ? CORNER_PRESS : 1;
+
+    /**
      * 跳んでよい状況かを一度だけ決める。空中はガードできないので、
      * 跳ぶかどうかは弾の有無で意味が大きく変わる。
      *
@@ -614,8 +1469,31 @@ export class CpuController {
      */
     const foeShotAlive = sim.projectiles.some((p) => p.owner !== this.index);
     const foeRanged = profileOf(foe.def).attack.projectile;
-    const jumpW = (w) => {
+    /**
+     * 頭上から降ってくる脅威。跳ばれた時点で読んでおく（`_airThreat()` 参照）。
+     * 空中スキルは発生 4〜6 フレームなので、判定が見えてからでは何も選べない。
+     */
+    const air = this._airThreat(me, foe);
+    /** 相手が「見てから対応できない降り技」を持っているか。 */
+    const foeDiver = hasFastDive(foe.def);
+    const jumpW = (w, openFor = 0) => {
       if (foeShotAlive) return 0;
+      /**
+       * 降り技を持つ相手には跳ばない。
+       *
+       * 浮いている間はガードもダッシュも出せず、そのうえ着地硬直が付いてくる。
+       * 相手の降り技は 4〜6 フレームで出るので、**こちらの着地に合わせて
+       * 落としてくるだけで終わる**。総当たりでも「跳んで下がる」は
+       * 降り技を持つ 4 キャラすべてに対して 0/15 で、ひとつも助からなかった。
+       *
+       * 「相手が硬直しているうちに跳べばいい」も通らない――**明ける時間を
+       * 数えないなら**。硬直はこちらが浮いている間に明けて、明けた相手は
+       * そのまま跳び返してくる。ただし着地まで明けないと分かっているなら
+       * 話は別で、そのときは降り技も対空も返ってこない。
+       * 数えずに一律で禁じていたせいで、大技を空振りした相手にすら
+       * 跳び込まなくなっていた。
+       */
+      if ((air || foeDiver) && openFor < JUMP_IN_SAFE) return 0;
       if (foeRanged && foe.isFree) return w * 0.12;
       return w;
     };
@@ -638,6 +1516,24 @@ export class CpuController {
      */
     const skillUsable =
       !prof.skill.harmless && !(prof.skill.grab && foe.airborne) && !foe.isWarding;
+    /**
+     * 置き技が成立するか。相手が判定の中へ入ってくるのが、ちょうど自分の
+     * 発生ぶん先のとき ＝ いま振り始めれば、来たところに判定が出ている。
+     *
+     * **跳んでいる相手にだけ置く。** 置きは相手の軌道を当てにする手なので、
+     * 途中で進路を変えられると空振りして、こちらが硬直を晒すだけになる。
+     * 地上の相手にも置いていた版は、固定の相手 1500 試合で収支 699.5 → 684.5 と
+     * 落ちた。跳んだあとは重力に従うしかなく軌道が確定しているので、
+     * そこだけは読み切れる（同じ試行で 703.3）。
+     */
+    const placeIn = this._placeWindow(me, foe, prof.attack);
+    const canPlace =
+      foe.airborne &&
+      this.cooldown === 0 &&
+      !foe.invulnerable &&
+      placeIn >= prof.attack.startup &&
+      placeIn <= prof.attack.startup + PLACE_WINDOW;
+
     // 遠距離キャラは離れて弾を撒くのが仕事
     const ranged = prof.attack.projectile;
     const idealRange = ranged ? 430 : hitRange * 0.85;
@@ -647,7 +1543,18 @@ export class CpuController {
     if (me.airborne && me.state === STATE.JUMP) {
       const opts = [];
       const falling = me.vy < 0;
-      if (dist < 240 && falling && !foe.invulnerable) {
+      /**
+       * 相手も降り技を構えているなら、空中で振り合っても勝ち目が薄い。
+       * こちらの空中技は発生 7〜8F、相手の降り技は 4〜6F で、しかも
+       * 向こうはガードを崩す。**着地際を狙われる前に軌道を外す**方を選ぶ。
+       */
+      if (air) {
+        if (me.airJumps > 0) {
+          opts.push({ act: 'retreat', bits: BTN.UP | away, ticks: 8, weight: cfg.guard * 8, air: true });
+        }
+        opts.push({ act: 'retreat', bits: away, ticks: 8, weight: cfg.spacing * 5, air: true });
+      }
+      if (!air && dist < 240 && falling && !foe.invulnerable) {
         // 降り際に振ると地上の相手に当たりやすい
         opts.push({ act: 'attack', bits: BTN.ATTACK, ticks: 5, weight: cfg.aggression * 3 });
         opts.push({ act: 'skill', bits: BTN.SKILL, ticks: 5, weight: cfg.aggression });
@@ -679,9 +1586,20 @@ export class CpuController {
       const opts = [];
       // 間近か。ガードは 1 フレームで出るので、受けるならここまで待てる
       const near = shot.frames <= PROJECTILE_WATCH;
+      /**
+       * ガードごと持っていく弾か（女子高生の彼氏・巫女の結界の欠片）。
+       *
+       * 「弾は guardBreak を持たない」は成り立たない。受けに回った時点で負ける弾が
+       * あるので、ここを見ないとスキルを連打されるだけで詰む
+       * （実測では、彼氏を呼ばれ続けた CPU の死因 209 回中 184 回がガード中だった）。
+       *
+       * 技のときと同じく、気づけるかどうかは難易度で変える。
+       */
+      const unblockable =
+        (shot.def.guardBreak === true || shot.def.grab === true) && rng.next() < cfg.read;
 
-      if (near) {
-        // 弾に対するいちばん確実な答えはガード。弾は guardBreak を持たない。
+      if (near && !unblockable) {
+        // 普通の弾に対するいちばん確実な答えはガード。
         // しゃがみは効かない（弾はしゃがんだぶん狙いを下げ直してくる）。
         if (!shot.fromBehind) {
           opts.push({ act: 'guard', bits: BTN.GUARD, ticks: 14, weight: cfg.guard * 8 });
@@ -692,11 +1610,83 @@ export class CpuController {
         }
       }
 
-      // 2段ジャンプで避ける。1段目は**真上**に跳ぶだけで、避けるのは 2段目
-      // （空中の分岐が弾との距離を見て前へ跳び直す）。
-      // 跳ぶ時間が残っているうちにしか始められない。
-      // 2段目が無いと跳んだだけの的になるので、残り回数も確認する。
-      if (
+      if (unblockable) {
+        /**
+         * 結界は弾もろとも弾く。彼氏も結界の欠片も、止めているのは
+         * guardBreak / grab という同じ印なので、技のときと同じ手が通る。
+         */
+        if (Number.isFinite(prof.skill.wardFrame) && shot.frames >= prof.skill.wardFrame) {
+          opts.push({
+            act: 'skill',
+            bits: BTN.SKILL,
+            ticks: 8,
+            weight: cfg.guard * 16,
+            skillCooldown: 40,
+            forced: true,
+          });
+        }
+        // ガードが効かない以上、答えは「越える」か「くぐる」しかない。
+        // どちらも弾の判定の高さで決まるので、まずそれを出す。
+        const box = shot.def.box;
+        const bottom = box ? shot.p.y + (box.y ?? -box.h / 2) : shot.p.y - shot.def.radius;
+        const top = box ? bottom + box.h : shot.p.y + shot.def.radius;
+        const apexFrames = me.def.jumpVy / GRAVITY;
+        const apexHeight = (me.def.jumpVy * me.def.jumpVy) / (2 * GRAVITY);
+        const canHop = top + HOP_CLEARANCE <= apexHeight;
+        const canDuck = bottom >= CROUCH_CLEAR_Y;
+
+        if (canHop && Math.abs(shot.frames - apexFrames) <= HOP_WINDOW) {
+          // 頂点が弾の位置に重なる踏み切りどき。ここだけで跳ぶ
+          opts.push({
+            act: 'dodge',
+            bits: BTN.UP,
+            ticks: 8,
+            weight: cfg.guard * 12,
+            forced: true,
+          });
+        } else if (canDuck) {
+          opts.push({
+            act: 'duck',
+            bits: BTN.DOWN,
+            ticks: 16,
+            weight: cfg.guard * 12,
+            forced: true,
+          });
+        } else if (canHop && shot.frames > apexFrames) {
+          // まだ遠い。踏み切りどきまでは足を止めない
+          opts.push({ act: 'walkIn', bits: toFoe, ticks: 5, weight: 2 });
+          opts.push({ act: 'wait', bits: 0, ticks: 5, weight: 1.5 });
+        } else {
+          /**
+           * 越えることもくぐることもできない弾（女子高生の彼氏）。
+           *
+           * 受ける手が無いので、逃げ回っても壁際で同じことになる。
+           * **呼んだ本人を先に倒しに行く**のが唯一の勝ち筋で、
+           * 呼んでから届くまでが長いぶん、その間に差し込む時間はある。
+           * 避けられない弾から目を逸らして相手だけを見る、という切り替え。
+           */
+          opts.push({
+            act: 'rush',
+            bits: toFoe | BTN.DASH,
+            ticks: 8,
+            weight: cfg.punish * 6,
+            forced: true,
+          });
+          if (dist <= hitRange && !foe.invulnerable) {
+            opts.push({
+              act: 'attack',
+              bits: BTN.ATTACK,
+              ticks: 6,
+              weight: cfg.punish * 10,
+              forced: true,
+            });
+          }
+        }
+      } else if (
+        // 2段ジャンプで避ける。1段目は**真上**に跳ぶだけで、避けるのは 2段目
+        // （空中の分岐が弾との距離を見て前へ跳び直す）。
+        // 跳ぶ時間が残っているうちにしか始められない。
+        // 2段目が無いと跳んだだけの的になるので、残り回数も確認する。
         me.airJumps > 0 &&
         shot.frames >= DODGE_ARM_FRAMES &&
         shot.frames <= DODGE_ARM_MAX
@@ -705,13 +1695,181 @@ export class CpuController {
       }
 
       // まだ間近でないなら、詰める足は止めない（弾を見るたび固まると近づけない）
-      if (!near) {
+      if (!near && !unblockable) {
         opts.push({ act: 'rush', bits: toFoe | BTN.DASH, ticks: 8, weight: cfg.dash * 3 });
         opts.push({ act: 'walkIn', bits: toFoe, ticks: 8, weight: 1.5 });
       }
-      opts.push({ act: 'wait', bits: 0, ticks: 6, weight: (1 - cfg.guard) * 2 });
+      if (!unblockable) {
+        opts.push({ act: 'wait', bits: 0, ticks: 6, weight: (1 - cfg.guard) * 2 });
+      }
       return this._choose(rng, opts);
     }
+
+    /**
+     * ── 相手が降ってくる ──────────────────────────────────
+     *
+     * 空中スキルは発生 4〜6 フレーム。技が出てから選べる手は何も無いので、
+     * ここは**跳ばれた時点**で答えを決める。落ちてくる軌道は技データで
+     * 決まっているので、どこへいつ届くかは先に読める（`_airThreat()`）。
+     *
+     * どの手が本当に助かるのかは、降り技を持つ 5 キャラ × 間合い 5 通り ×
+     * 踏み切り 15 通りを総当たりして確かめた。結果ははっきりしていて、
+     *
+     *   - **走って下がる**  … どの間合いでも 13〜15/15。いちばん外れが無い
+     *   - **走って潜る**    … 相手の空中判定の外側からなら 15/15。
+     *                        跳んだ相手の下をくぐると、着地したときには
+     *                        こちらが背後にいて、長い着地硬直がまるごと隙になる
+     *   - **跳んで下がる**  … 0/15。浮いた時点でガードもダッシュも出せず、
+     *                        着地際を狙って降ってこられるだけ
+     *   - ガード・しゃがみ  … 崩す技なので 0/15
+     *
+     * 要は**足で外す**しかない。そして外し切るには降り切るまで押し続ける
+     * 必要があるので、ここで決めた手は着地まで維持する。
+     */
+    if (air && air.frames <= AIR_REACT) {
+      // 気づけるかどうかは難易度で変える。弱い設定はここを取りこぼして
+      // 地上の間合い争いを続け、降ってこられる ＝ 飛び込みがちゃんと通る。
+      if (rng.next() < cfg.read) {
+        const opts = [];
+        const hold = Math.min(HOLD_MAX, air.landIn + 6);
+
+        /**
+         * どちらへ走れば外せるかは、実際に走らせて確かめる（`_diveEscape()`）。
+         *
+         * 相手ごとに「この間合いなら下がる／潜る」と決め打ちすると必ず外れる。
+         * キャヴァリアのドリルは判定 208 でも突進を足すと 518 届くので、
+         * 判定の長さで測ると内側から潜りに行って刺さる。逆にメイドの天空斬りは
+         * ほぼ真下に落ちるので、遠ければ下をくぐれる。**同じ数字で両方は測れない**。
+         *
+         * 壁で頭打ちになるところまで `_airThreat()` の中で見ているので、
+         * 背中が壁のときに「下がれば外せる」と読み違えることもない。
+         */
+        const awayDir = away === BTN.LEFT ? -1 : 1;
+        // 何もしなければ捕まるまでの時間。走って稼げるかはこれと比べる。
+        const stayT = air.frames;
+        const backT = this._diveEscape(me, foe, awayDir);
+        const underT = this._diveEscape(me, foe, -awayDir);
+        const canBack = backT > stayT;
+        const canUnder = underT > stayT;
+
+        if (canBack) {
+          // 走って下がる。外せるなら、これがいちばん外れの無い答え。
+          opts.push({
+            act: 'retreat',
+            bits: away | BTN.DASH,
+            ticks: hold,
+            weight: cfg.spacing * (backT === Infinity ? 10 : 5),
+            air: true,
+          });
+        }
+        if (canUnder) {
+          /**
+           * 走って潜る。相手が高いうちに下をくぐると、判定が降りてくる頃には
+           * こちらが背後にいる。そのうえ相手は長い着地硬直を晒すので、
+           * 避けながらそのまま差し返しの間合いに入れる。
+           */
+          opts.push({
+            act: 'rush',
+            bits: toFoe | BTN.DASH,
+            ticks: hold,
+            weight: cfg.punish * (underT === Infinity ? (canBack ? 6 : 10) : 3),
+            air: true,
+          });
+        }
+        // どちらへ走っても時間を稼げない ＝ 壁を背負って降られた形。
+        const trapped = !canBack && !canUnder;
+        if (trapped && air.low >= 0) {
+          /**
+           * 走って外せないなら、姿勢を低くして通す。
+           *
+           * しゃがめばやられ判定は 198 → 100 まで縮む。総当たりでも、
+           * 壁際でキャヴァリアのドリルを受けて助かったのはしゃがみだけだった
+           * （12〜15/15。下がる・受ける・詰めるは軒並み 0〜3/15）。
+           *
+           * ただし**判定が相手の足元より下まで出る技**（天空斬り -16・
+           * 急降下斬り -10・急降下 -34）は地面ごと薙いでくるので、縮んでも当たる。
+           * そういう技にしゃがむのは何もしないより悪いので、ここで切り分ける。
+           */
+          opts.push({ act: 'duck', bits: BTN.DOWN, ticks: hold, weight: cfg.guard * 12, air: true });
+        }
+        if (trapped) {
+          /**
+           * しゃがんでも通せない技を、走って外せないところで受ける形。
+           * ここまで来ると助かる手はほぼ残っていない。
+           *
+           * それでも下がり続ければ、相手の踏み込みを壁の手前で余らせられることがある。
+           * ここから前へ走って抜けようとするのは、総当たりでも壁際では
+           * 軒並み 0〜3/15 で、**降りてくる判定へ自分から入る**だけだった。
+           */
+          opts.push({
+            act: 'retreat',
+            bits: away | BTN.DASH,
+            ticks: hold,
+            weight: cfg.spacing * 4,
+            air: true,
+          });
+        }
+
+        /**
+         * 対空。落ちてくるところへ判定を置く。
+         *
+         * 振り始めるのは**発生ぶん手前**で、そこを外すと当たらない。
+         * 密着で降りられたときだけの手で、少しでも遠いと振り終わった頭の上から
+         * 刺されるので、間合いも発生も揃ったときにしか候補に入れない。
+         */
+        if (
+          this.cooldown === 0 &&
+          !foe.invulnerable &&
+          air.dist <= hitRange * 0.9 &&
+          prof.attack.top >= air.y &&
+          air.frames >= prof.attack.startup &&
+          air.frames <= prof.attack.startup + AIR_SWING_WINDOW
+        ) {
+          opts.push({
+            act: 'attack',
+            bits: BTN.ATTACK,
+            ticks: 6,
+            weight: cfg.punish * 5,
+            cooldown: 20,
+            air: true,
+          });
+        }
+
+        /**
+         * ガード。空中**攻撃**は普通に止まるが、空中**スキル**は軒並み
+         * ガードを崩す。崩す手を持っている相手に固めるのは、
+         * 割られたぶん硬直が伸びる（GUARD_BREAK_EXTRA）ので何もしないより悪い。
+         */
+        if (!air.guardBreak) {
+          opts.push({ act: 'guard', bits: BTN.GUARD, ticks: hold, weight: cfg.guard * 14, air: true });
+        }
+
+        /**
+         * くぐる。判定が高いところに収まったまま通り過ぎる技だけ。
+         *
+         * 高さの下駄は履かせない（`_isDuckable()` と同じ理由）。**落ちてくる技を
+         * 接触点の高さで測ると、そのあとも降り続けることを見落とす**。
+         * 天空斬りは判定の下端が -16 ＝ 地面まで突き刺さってくるので、
+         * 胸の高さで測れば「くぐれる」に見えてしまい、しゃがんだまま刺される。
+         */
+        if (air.low >= CROUCH_CLEAR_Y) {
+          opts.push({ act: 'duck', bits: BTN.DOWN, ticks: hold, weight: cfg.guard * 7, air: true });
+        }
+
+        /**
+         * すでにこの降り技への答えを選んであるなら、それを押し通す。
+         *
+         * ただし**走って外せなくなったら選び直す**。下がり切って壁に着いたあとも
+         * 同じ「走って下がる」を押し続けるのは、下がっているつもりで
+         * 動いていないだけになる（実測でキャヴァリアに負けた 86 回すべてが、
+         * 40 ティック下がり切ったあと壁に貼り付いたままの被弾だった）。
+         */
+        const locked = !trapped && this.airAct && opts.find((o) => o.act === this.airAct);
+        if (locked) return this._commit(locked);
+        return this._choose(rng, opts);
+      }
+    }
+    if (!air) this.airAct = null;
 
     // ── 相手の技が来ている ────────────────────────────────
     const incoming = this._incomingAttack(foe);
@@ -722,40 +1880,119 @@ export class CpuController {
       const until = this._framesUntilHit(foe);
       // 掴みはガードで防げない。跳ぶのが唯一の答えになる
       const grabbing = this._incomingGrab(foe);
+      // スキル（guardBreak）もガードでは止まらない。しかも割られたぶん硬直が伸びる。
+      // 掴みと違って空中の相手にも当たるので、答えは「しゃがむ・潰す・離れる」になる。
+      const breaking = !grabbing && this._incomingBreak(foe);
+      // ただし、それに気づけるかは難易度で変える。弱い設定はここを取りこぼして
+      // ガードを固め、そのまま割られる ＝ 連打がちゃんと通る
+      const unblockable = (grabbing || breaking) && rng.next() < cfg.read;
+      // 守りを維持する長さは、その技が出切るまでに合わせる。
+      const holdFor = Math.min(HOLD_MAX, Math.max(12, this._threatFrames(foe)));
+
+      /**
+       * 結界を張って弾く（巫女）。
+       *
+       * 結界が無効にするのは**ガード不能技と掴みだけ**で、それはちょうど
+       * こちらが答えを持っていない攻撃と重なる。しかも弾いた側は返し技
+       * （結界の欠片）に移れるので、受けるだけで終わらない。
+       *
+       * 張り切るまでのフレームが要るので、間に合うときだけ。
+       */
+      if (unblockable && Number.isFinite(prof.skill.wardFrame) && until >= prof.skill.wardFrame) {
+        opts.push({
+          act: 'skill',
+          bits: BTN.SKILL,
+          ticks: 8,
+          weight: cfg.guard * 16,
+          skillCooldown: 40,
+          forced: true,
+        });
+      }
 
       // ガードは一番確実。ただしこれ一択にすると、崩し技を置かれて終わる。
-      // 掴みに対してだけはまったくの無駄なので出さない。
-      if (!grabbing) {
-        opts.push({ act: 'guard', bits: BTN.GUARD, ticks: 12, weight: cfg.guard * 5 });
+      // ガードで止まらない技に対してはまったくの無駄なので出さない。
+      if (!unblockable) {
+        opts.push({
+          act: 'guard',
+          bits: BTN.GUARD,
+          ticks: Math.min(holdFor, 20),
+          weight: cfg.guard * 5,
+        });
       }
 
       // ビームのように高いところだけを薙ぐ攻撃は、しゃがめばくぐれる。
-      // ガード不能なので、くぐれるなら最優先
-      if (this._isDuckable(foe)) {
-        opts.push({ act: 'duck', bits: BTN.DOWN, ticks: 50, weight: cfg.guard * 14 });
+      // ガード不能なので、くぐれるなら最優先。
+      // **しゃがみ切るまで、そして技が出切るまで**維持する。立ち上がりの 1 ティックで
+      // やられ判定は 110 まで戻る＝ビームの下端 107 に届くので、早く立てば当たる。
+      const duckable = this._isDuckable(foe);
+      if (duckable) {
+        opts.push({
+          act: 'duck',
+          bits: BTN.DOWN,
+          ticks: holdFor,
+          weight: cfg.guard * 14,
+          forced: unblockable,
+        });
       }
       // 判定が低いところに収まっているなら跳んで越える。
       // ただし跳び上がるまでに判定が来ると、そのまま食らうだけになる。
-      // 掴み相手はこれが唯一の答えなので、ビームをしゃがむのと同じ重みで最優先する。
+      // ガード不能技はこれが数少ない答えなので、ビームをしゃがむのと同じ重みで最優先する。
       if (this._isJumpable(foe) && until >= JUMP_ESCAPE_FRAMES) {
-        const w = grabbing ? cfg.guard * 14 : cfg.guard * 1.6;
-        opts.push({ act: 'jumpIn', bits: BTN.UP | toFoe, ticks: 8, weight: jumpW(w) });
+        const w = unblockable ? cfg.guard * 14 : cfg.guard * 1.6;
+        opts.push({
+          act: 'jumpIn',
+          bits: BTN.UP | toFoe,
+          ticks: 8,
+          weight: jumpW(w),
+          forced: unblockable && !duckable,
+        });
         opts.push({ act: 'retreat', bits: BTN.UP | away, ticks: 8, weight: jumpW(w * 0.6) });
       }
-      // 間合いの端で受けているなら、下がれば空振りにできる。
-      // これも下がり切る時間が要る。
-      // 掴みは間合いが短いので、跳ぶ時間が無いときはこれが次善の手になる。
-      if ((grabbing || threat - dist < 70) && until >= RETREAT_ESCAPE_FRAMES) {
+      /**
+       * 間合いの端で受けているなら、下がれば空振りにできる。
+       * これも下がり切る時間が要る。
+       * ガード不能技は受ける手が無いので、跳べないときはこれが次善の手になる。
+       *
+       * ただし**下がれる距離は時間だけでは決まらない**。壁までの残りで頭打ちに
+       * なるので、そこまで含めて「本当に空振らせられるか」を見る。
+       * 時間だけで測っていた頃は、背中が壁でも同じ重みで下がる手を選んでいて、
+       * 動かないまま判定を受けていた。
+       */
+      const backOut = Math.min(room, me.def.dashSpeed * until);
+      if (
+        (unblockable || threat - dist < 70) &&
+        until >= RETREAT_ESCAPE_FRAMES &&
+        dist + backOut > threat
+      ) {
         opts.push({
           act: 'retreat',
           bits: away | BTN.DASH,
           ticks: 12,
-          weight: cfg.spacing * (grabbing ? 4 : 2.5),
+          weight: cfg.spacing * (unblockable ? 4 : 2.5),
         });
       }
-      // 相手の発生より自分の発生が速いなら、割り込んだ方が勝つ
+      // 相手の発生より自分の発生が速いなら、割り込んだ方が勝つ。
+      // **スキルは軒並み発生が遅い**ので、連打してくる相手にはこれが本命の答えになる。
       if (dist <= hitRange && until > prof.attack.startup + 3) {
-        opts.push({ act: 'attack', bits: BTN.ATTACK, ticks: 6, weight: cfg.punish * 2.5 });
+        opts.push({
+          act: 'attack',
+          bits: BTN.ATTACK,
+          ticks: 6,
+          weight: cfg.punish * (unblockable ? 6 : 2.5),
+        });
+      }
+      // 溜めの長い技は、出る前に踏み込んで潰すのが本筋。
+      // 照射の溜め 1 秒は、間合いの外からでも走り込んで振り切れる時間がある。
+      // 「見てから避ける」だけだと避け続けるだけで勝ちに行けない。
+      if (until >= SLOW_STARTUP && dist > hitRange) {
+        const closeIn = (dist - hitRange) / Math.max(1, me.def.dashSpeed);
+        if (closeIn + prof.attack.startup + 4 <= until) {
+          opts.push({ act: 'rush', bits: toFoe | BTN.DASH, ticks: 8, weight: cfg.punish * 4 });
+        }
+      }
+      // ガード不能技に対して手が何も残らなかったとき。せめて間合いを外す
+      if (unblockable && opts.length === 0) {
+        opts.push({ act: 'retreat', bits: away | BTN.DASH, ticks: 10, weight: 1, forced: true });
       }
       return this._choose(rng, opts);
     }
@@ -769,14 +2006,14 @@ export class CpuController {
       if (dist <= hitRange && open >= prof.attack.startup) {
         opts.push({ act: 'attack', bits: BTN.ATTACK, ticks: 6, weight: cfg.punish * 5 });
       }
-      if (dist <= skillRange && open >= prof.skill.startup + 4 && this.cooldown === 0 && skillUsable) {
+      if (dist <= skillRange && open >= prof.skill.startup + 4 && this.skillCd === 0 && skillUsable) {
         // 大技が確定で入る場面。一番おいしい
         opts.push({
           act: 'skill',
           bits: BTN.SKILL,
           ticks: 6,
           weight: cfg.punish * 4,
-          cooldown: 60,
+          skillCooldown: 60,
         });
       }
       // 届かないなら詰める。硬直が明ける前に間合いへ入れたい
@@ -785,10 +2022,10 @@ export class CpuController {
         act: 'jumpIn',
         bits: BTN.UP | toFoe,
         ticks: 8,
-        weight: jumpW(dist > hitRange * 1.4 ? 1 : 0.2),
+        weight: jumpW(dist > hitRange * 1.4 ? 1 : 0.2, open),
       });
       opts.push({ act: 'wait', bits: 0, ticks: cfg.react, weight: (1 - cfg.punish) * 3 });
-      return this._choose(rng, opts);
+      return this._choose(rng, opts, true);
     }
 
     // ── 通常の間合い争い ──────────────────────────────────
@@ -796,19 +2033,54 @@ export class CpuController {
     // 固めているかどうかも、見えていなければ分からない
     const turtling = !blind && this._turtling(foe);
 
-    // 届くなら振る
-    if (dist <= hitRange && !foe.invulnerable && this.cooldown === 0) {
+    /**
+     * 届くなら振る。
+     *
+     * ただし降り技を持つ相手には、**間合いの先端で振らない**。
+     * 空振った 41 フレームは跳んで降りてくるのにちょうど足りる時間で、
+     * 発生 4〜6 フレームの降り技はそこへ落ちてくるだけでいい
+     * （実測では、降り技で死んだ 335 回のうち 100 回が自分の空振り中だった）。
+     * 当たる間合いまで入ってから振れば、外して差し返される形にはならない。
+     */
+    const pokeRange = foeDiver && foe.isFree ? hitRange * 0.85 : hitRange;
+    const inPoke = dist <= pokeRange && !foe.invulnerable && this.cooldown === 0;
+
+    // 置き技。まだ届いていないが、振り始めれば相手の入りに間に合う
+    if (canPlace && !inPoke) {
       opts.push({
         act: 'attack',
         bits: BTN.ATTACK,
         ticks: 6,
-        weight: cfg.aggression * 3,
-        cooldown: ranged ? 12 : 20,
+        weight: cfg.aggression * 6 * press,
+        cooldown: ranged ? 10 : 8,
+      });
+    }
+
+    if (inPoke) {
+      /**
+       * 届いているなら振る手をいちばん重く見る。
+       *
+       * ここが軽かった頃は、間合いに入っていても下がる・待つの合計が攻めを
+       * 上回っていた（密着で下がり 3.3 対 振り 2.4）。一手ずつは筋が通って
+       * いても、足し合わせると**届く位置に来るたびに引き返す**動きになる。
+       * 届く位置は待つための場所ではないので、そこでは振りを本命に置く。
+       */
+      opts.push({
+        act: 'attack',
+        bits: BTN.ATTACK,
+        ticks: 6,
+        weight: cfg.aggression * 6 * press,
+        /**
+         * 振ったあとの間。技そのものの戻り（20〜30 フレーム）に上乗せする
+         * ぶんなので、ここを長く取ると**技の硬直が明けてもまだ振らない**
+         * 時間ができる。散らすのが目的なら短くて足りる。
+         */
+        cooldown: ranged ? 10 : 8,
       });
     }
     // スキルはガードを崩せる代わりに発生が遅く、外すと大きな隙になる。
     // 固める相手か、出し切るまで踏み込まれない距離のときだけ。
-    if (dist <= skillRange && this.cooldown === 0 && skillUsable) {
+    if (dist <= skillRange && this.skillCd === 0 && skillUsable) {
       const slow = prof.skill.startup > SLOW_STARTUP;
       if (turtling) {
         // 打撃が通らないので、崩すならこれしかない。
@@ -817,28 +2089,43 @@ export class CpuController {
           act: 'skill',
           bits: BTN.SKILL,
           ticks: 6,
-          weight: cfg.crush * (prof.skill.grab ? 10 : 6),
-          cooldown: slow ? 90 : 60,
+          weight: cfg.crush * (prof.skill.grab ? 10 : 6) * press,
+          skillCooldown: slow ? 90 : 60,
         });
       } else if (dist > hitRange * 0.7) {
         opts.push({
           act: 'skill',
           bits: BTN.SKILL,
           ticks: 6,
-          weight: cfg.aggression * (slow ? 0.5 : 1.2),
-          cooldown: slow ? 150 : 70,
+          weight: cfg.aggression * (slow ? 0.5 : 1.2) * press,
+          skillCooldown: slow ? 150 : 70,
         });
       }
     }
     // 固める相手には、いったん離れて仕切り直すのも手。
     // ただし下がりすぎると崩しの間合いから外れてしまうので、内側にいるときだけ。
-    if (turtling && dist < skillRange * 0.8) {
-      opts.push({ act: 'retreat', bits: away, ticks: 14, weight: cfg.spacing * 0.8 });
+    // 相手を壁に詰めているなら仕切り直さない。空けたぶんだけ相手が出てこられる。
+    if (turtling && dist < skillRange * 0.8 && !foeCornered) {
+      opts.push({ act: 'retreat', bits: away, ticks: 14, weight: backW(cfg.spacing * 0.8) });
     }
-    // 近すぎる。相手の間合いの内側で殴り合うのは割が悪い
-    if (dist < hitRange * 0.5 && foe.isFree) {
-      opts.push({ act: 'retreat', bits: away, ticks: 14, weight: cfg.spacing * 2.5 });
-      opts.push({ act: 'retreat', bits: away | BTN.DASH, ticks: 12, weight: cfg.spacing * 1.2 });
+    /**
+     * 近すぎる。相手の間合いの内側で殴り合うのは割が悪い……のだが、
+     * **自分の技も届いている位置**なので、下がるのは手放しに正しくはない。
+     *
+     * ここを重く見ていた頃は、密着するたびに仕切り直して間合いを空け、
+     * 空いたぶんをまた詰め直していた。近づいては離れるだけで手が出ない。
+     * 振れる状況（inPoke）なら選択肢のひとつに留めて、
+     * 振れないとき（硬直中・技の戻り）だけ本来の重さで下がる。
+     */
+    if (dist < hitRange * 0.5 && foe.isFree && !foeCornered) {
+      const w = inPoke ? 0.45 : 1;
+      opts.push({ act: 'retreat', bits: away, ticks: 14, weight: backW(cfg.spacing * 2.5 * w) });
+      opts.push({
+        act: 'retreat',
+        bits: away | BTN.DASH,
+        ticks: 12,
+        weight: backW(cfg.spacing * 1.2 * w),
+      });
     }
     // 遠いので詰める。歩き・走り・飛び込みを混ぜる。
     // ただし相手が下がり続けているなら歩いて追っても追いつけないので、
@@ -850,7 +2137,7 @@ export class CpuController {
         act: 'rush',
         bits: toFoe | BTN.DASH,
         ticks: 10,
-        weight: cfg.dash * (fleeing ? 6 : 3),
+        weight: cfg.dash * (fleeing ? 6 : 3) * press,
       });
       if (dist > 280) {
         opts.push({
@@ -861,15 +2148,42 @@ export class CpuController {
         });
       }
     }
-    // 自分の間合いの先端で待つ。相手が入ってきたら差し返せる
-    opts.push({ act: 'wait', bits: 0, ticks: 10, weight: cfg.spacing * 1.5 });
+    /**
+     * 自分の間合いの先端で待つ。相手が入ってきたら差し返せる。
+     *
+     * ただし**もう届いているなら待つ意味は無い**。差し返しは相手を待たせる
+     * 間合いで成立する手で、届く位置で同じ重さのまま置いておくと、
+     * 攻め手と張り合って「入ったのに何もしない」時間を作るだけになる。
+     */
+    opts.push({ act: 'wait', bits: 0, ticks: 10, weight: cfg.spacing * (inPoke ? 0.4 : 1.5) });
     // 揺さぶり。前後に振って間合いを測る
     opts.push({ act: 'walkIn', bits: toFoe, ticks: 8, weight: 0.8 });
-    opts.push({ act: 'retreat', bits: away, ticks: 8, weight: 0.8 });
+    opts.push({ act: 'retreat', bits: away, ticks: 8, weight: backW(inPoke ? 0.35 : 0.8) });
     if (ranged && dist < idealRange * 0.7) {
-      // 遠距離キャラは離れ続けたい
-      opts.push({ act: 'retreat', bits: away | BTN.DASH, ticks: 14, weight: 3 });
+      /**
+       * 遠距離キャラは離れ続けたい……が、**下がる先が無くなったらそれは仕事に
+       * ならない**。壁を背負った弾撃ちは、間合いを保てないまま近い距離で
+       * 撃ち続けることになり、いちばん苦手な形に自分から入る。
+       * 余地があるうちだけ下がる手として重く見る。
+       */
+      opts.push({ act: 'retreat', bits: away | BTN.DASH, ticks: 14, weight: backW(3) });
     }
-    return this._choose(rng, opts);
+
+    /**
+     * 壁を背負っている。抜けることそのものを手として選ぶ。
+     *
+     * ここが無いと、詰められた CPU は「下がる手が軽くなった」だけの状態で
+     * 立ち回り続ける。軽くなった下がりの代わりに前へ出る手を積んでおかないと、
+     * 待ちと振りだけが残って、結局その場で受け続けることになる。
+     *
+     * 相手も壁際（＝どちらも隅、押し合っているだけ）なら要らない。
+     */
+    if (cornered && !foeCornered) {
+      // 走って正面から出る。相手をすり抜けられれば位置が入れ替わる
+      opts.push({ act: 'rush', bits: toFoe | BTN.DASH, ticks: 10, weight: cfg.spacing * 3 });
+      // 跳んで越える。跳んでよい状況かは jumpW がまとめて見ている
+      opts.push({ act: 'jumpIn', bits: BTN.UP | toFoe, ticks: 8, weight: jumpW(cfg.spacing * 2) });
+    }
+    return this._choose(rng, opts, true);
   }
 }
